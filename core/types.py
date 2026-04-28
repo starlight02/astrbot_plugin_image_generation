@@ -48,6 +48,7 @@ class AdapterConfig:
     max_retry_attempts: int = 3
     safety_settings: str | None = None
     capability_options: dict[str, bool] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)  # 适配器特有配置
 
 
 @dataclass

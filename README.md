@@ -41,7 +41,7 @@
 | :-------------- | :----: | :----: | :----: | :----: | :-------------------------------------------------------------------- |
 | `gemini`        |   ✅    |   ✅    |   ✅    |   ✅    | Gemini 原生 API                                                       |
 | `gemini_openai` |   ✅    |   ✅    |   ❌    |   ❌    | OpenAI 兼容格式的 Gemini 接口                                         |
-| `openai`        |   ✅    |   ❌    |   ❌    |   ✅    | OpenAI DALL-E 3                                                       |
+| `openai`        |   ✅    |   ✅    |   ❌    |   ✅    | OpenAI DALL-E 3 / GPT Image 系列（gpt-image-1、gpt-image-1-mini、gpt-image-1.5 等），图生图仅支持 GPT Image 系列 |
 | `z_image_gitee` |   ✅    |   ❌    |   ✅    |   ✅    | Gitee AI (z-image-turbo)                                              |
 | `jimeng2api`    |   ✅    |   ✅    |   ✅    |   ✅    | 适用于[iptag/jimeng-api](https://github.com/iptag/jimeng-api)的适配器 |
 持续更新中······

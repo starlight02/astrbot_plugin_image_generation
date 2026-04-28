@@ -136,6 +136,11 @@ class ConfigManager:
             proxy = (provider_item.get("proxy") or "").strip() or None
             capability_options = self._parse_capability_options(provider_item)
 
+            # 解析适配器特有配置
+            extra: dict[str, Any] = {}
+            if adapter_type == AdapterType.OPENAI:
+                extra["model_family"] = provider_item.get("model_family", "auto")
+
             all_provider_configs.append(
                 AdapterConfig(
                     type=adapter_type,
@@ -147,6 +152,7 @@ class ConfigManager:
                     timeout=gen_cfg.get("timeout", 180),
                     max_retry_attempts=gen_cfg.get("max_retry_attempts", 3),
                     capability_options=capability_options,
+                    extra=extra,
                 )
             )
 

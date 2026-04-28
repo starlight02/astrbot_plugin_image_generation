@@ -154,6 +154,10 @@
             "hint": "用于 /生图模型 命令切换时的可选模型。",
             "type": "list",
             "default": [
+              "gpt-image-2",
+              "gpt-image-1.5",
+              "gpt-image-1",
+              "gpt-image-1-mini",
               "dall-e-3"
             ]
           },
@@ -169,8 +173,20 @@
             ],
             "default": [
               "文生图",
+              "图生图",
               "宽高比"
             ]
+          },
+          "model_family": {
+            "description": "模型系列",
+            "hint": "选择使用的 OpenAI 模型系列，影响 API 调用方式（如图生图、response_format 等）。选择 auto 时，根据当前选中的模型名称自动识别：包含 gpt-image 时识别为 gpt-image 系列，否则为 dall-e 系列。",
+            "type": "string",
+            "options": [
+              "auto",
+              "gpt-image",
+              "dall-e"
+            ],
+            "default": "auto"
           }
         }
       },
