@@ -46,12 +46,6 @@ DEFAULT_MAX_CONCURRENT_TASKS = 3
 DEFAULT_MAX_IMAGE_SIZE_MB = 10
 """默认最大图片大小（MB）。"""
 
-DEFAULT_MAX_CACHE_COUNT = 100
-"""默认最大缓存文件数量。"""
-
-DEFAULT_CLEANUP_INTERVAL_HOURS = 24
-"""默认缓存清理间隔（小时）。"""
-
 DEFAULT_DAILY_LIMIT_COUNT = 10
 """默认每日生成限制次数。"""
 

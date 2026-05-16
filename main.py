@@ -10,6 +10,7 @@ import hashlib
 import json
 import time
 from collections.abc import Coroutine
+from pathlib import Path
 from typing import Any
 
 from astrbot.api import logger
@@ -17,6 +18,7 @@ from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.star.star_tools import StarTools
+from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 
 from .core.config_manager import ConfigManager
 from .core.generator import ImageGenerator
@@ -36,10 +38,12 @@ class ImageGenerationPlugin(Star):
         super().__init__(context)
         self.context = context
 
-        # 数据目录配置
+        # 数据目录配置：持久数据放插件数据目录，图片临时文件放 AstrBot 官方临时目录
         self.data_dir = StarTools.get_data_dir()
-        self.cache_dir = self.data_dir / "cache"
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.image_temp_dir = (
+            Path(get_astrbot_temp_path()) / "astrbot_plugin_image_generation"
+        )
+        self.image_temp_dir.mkdir(parents=True, exist_ok=True)
 
         # 初始化配置管理器
         self.config_manager = ConfigManager(config)
@@ -51,9 +55,8 @@ class ImageGenerationPlugin(Star):
 
         # 初始化图片处理器
         self.image_processor = ImageProcessor(
-            str(self.cache_dir),
+            str(self.image_temp_dir),
             self.config_manager.usage_settings.max_image_size_mb,
-            self.config_manager.cache_settings.max_cache_count,
         )
 
         # 初始化任务管理器
@@ -107,16 +110,7 @@ class ImageGenerationPlugin(Star):
 
     def _setup_tasks(self) -> None:
         """配置并启动定时任务。"""
-        # 1. 缓存清理任务
-        self.task_manager.start_loop_task(
-            name="cache_cleanup",
-            coro_func=self.image_processor.cleanup_cache,
-            interval_seconds=self.config_manager.cache_settings.cleanup_interval_hours
-            * 3600,
-            run_immediately=True,
-        )
-
-        # 2. Jimeng2API 自动领积分任务
+        # Jimeng2API 自动领积分任务
         self._setup_jimeng_token_task()
 
     def _setup_jimeng_token_task(self) -> None:

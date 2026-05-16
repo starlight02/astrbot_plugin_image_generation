@@ -4,13 +4,33 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from astrbot.api import logger
 from astrbot.core.config.astrbot_config import AstrBotConfig
 
+from .constants import DEFAULT_MAX_RETRY_ATTEMPTS, DEFAULT_TIMEOUT
 from .types import AdapterConfig, AdapterType
+
+
+PROVIDER_COMMON_FIELDS = frozenset(
+    {
+        "__template_key",
+        "name",
+        "base_url",
+        "proxy",
+        "api_keys",
+        "available_models",
+        "capability_options",
+        "timeout",
+        "max_retry_attempts",
+    }
+)
+
+ADAPTER_EXTRA_DEFAULTS: dict[AdapterType, dict[str, Any]] = {
+    AdapterType.OPENAI: {"model_family": "auto"},
+}
 
 
 @dataclass
@@ -23,14 +43,6 @@ class UsageSettings:
     max_image_size_mb: int = 10
     umo_blacklist: list[str] = field(default_factory=list)
     blacklist_block_message: str = "❌ 当前会话已被加入黑名单，无法使用生图功能"
-
-
-@dataclass
-class CacheSettings:
-    """缓存设置。"""
-
-    max_cache_count: int = 100
-    cleanup_interval_hours: int = 24
 
 
 @dataclass
@@ -85,7 +97,6 @@ class PluginConfig:
 
     adapter_config: AdapterConfig | None = None
     usage_settings: UsageSettings = field(default_factory=UsageSettings)
-    cache_settings: CacheSettings = field(default_factory=CacheSettings)
     generation_settings: GenerationSettings = field(default_factory=GenerationSettings)
     safety_audit_settings: SafetyAuditSettings = field(
         default_factory=SafetyAuditSettings
@@ -105,104 +116,24 @@ class ConfigManager:
 
     def load(self) -> PluginConfig:
         """加载并解析插件配置。"""
-        gen_cfg = self._config.get("generation", {})
-        user_limits_cfg = self._config.get("user_limits", {})
-        cache_cfg = self._config.get("cache", {})
-        safety_cfg = self._config.get("safety_audit", {})
+        gen_cfg = self._get_config_section("generation")
+        user_limits_cfg = self._get_config_section("user_limits")
+        safety_cfg = self._get_config_section("safety_audit")
         api_providers_raw = self._config.get("api_providers", [])
 
         self._plugin_config.enable_llm_tool = self._config.get("enable_llm_tool", True)
 
-        # 1. 收集所有供应商配置
-        all_provider_configs: list[AdapterConfig] = []
-        for provider_item in api_providers_raw:
-            if not isinstance(provider_item, dict):
-                continue
-
-            adapter_type_str = provider_item.get("__template_key")
-            if not adapter_type_str:
-                continue
-
-            try:
-                adapter_type = AdapterType(adapter_type_str)
-            except ValueError:
-                logger.warning(f"[ImageGen] 忽略未知适配器类型: {adapter_type_str}")
-                continue
-
-            name = provider_item.get("name", "")
-            base_url = (provider_item.get("base_url") or "").strip()
-            api_keys = [k for k in provider_item.get("api_keys", []) if k]
-            available_models = provider_item.get("available_models") or []
-            proxy = (provider_item.get("proxy") or "").strip() or None
-            capability_options = self._parse_capability_options(provider_item)
-
-            # 解析适配器特有配置
-            extra: dict[str, Any] = {}
-            if adapter_type == AdapterType.OPENAI:
-                extra["model_family"] = provider_item.get("model_family", "auto")
-
-            all_provider_configs.append(
-                AdapterConfig(
-                    type=adapter_type,
-                    name=name,
-                    base_url=self._clean_base_url(base_url),
-                    api_keys=api_keys,
-                    available_models=available_models,
-                    proxy=proxy,
-                    timeout=gen_cfg.get("timeout", 180),
-                    max_retry_attempts=gen_cfg.get("max_retry_attempts", 3),
-                    capability_options=capability_options,
-                    extra=extra,
-                )
-            )
+        all_provider_configs = self._load_provider_configs(api_providers_raw, gen_cfg)
 
         # 保存所有供应商配置供后续使用
         self._all_provider_configs = all_provider_configs
 
         # 2. 获取当前选择的模型
         model_setting = gen_cfg.get("model", "")
-
-        # 3. 匹配当前适配器
-        matched_config = None
-        current_model = ""
-
-        if "/" in model_setting:
-            try:
-                target_provider_name, target_model = model_setting.split("/", 1)
-                for cfg in all_provider_configs:
-                    if cfg.name == target_provider_name:
-                        matched_config = cfg
-                        current_model = target_model
-                        break
-            except ValueError:
-                logger.warning(
-                    f"[ImageGen] 模型设置格式错误: {model_setting}，期望格式为 '供应商/模型'"
-                )
-
-        # 如果没匹配到（或者没设置），取第一个可用的
-        if not matched_config and all_provider_configs:
-            matched_config = all_provider_configs[0]
-            current_model = (
-                matched_config.available_models[0]
-                if matched_config.available_models
-                else ""
-            )
-            logger.info(
-                f"[ImageGen] 未匹配到当前模型配置，默认使用: {matched_config.name}/{current_model}"
-            )
-
-        if matched_config:
-            self._plugin_config.adapter_config = matched_config
-            self._plugin_config.adapter_config.model = current_model
-            # 将所有可用模型汇总，供切换指令使用，格式为 "供应商名称/模型名称"
-            all_available_models = []
-            for cfg in all_provider_configs:
-                for m in cfg.available_models:
-                    all_available_models.append(f"{cfg.name}/{m}")
-            self._plugin_config.adapter_config.available_models = all_available_models
-        else:
-            self._plugin_config.adapter_config = None
-            logger.error("[ImageGen] 未找到任何有效的生图模型配置")
+        self._plugin_config.adapter_config = self._select_adapter_config(
+            all_provider_configs,
+            str(model_setting or ""),
+        )
 
         # 用户限制设置
         umo_blacklist_raw = user_limits_cfg.get("umo_blacklist", [])
@@ -224,12 +155,6 @@ class ConfigManager:
             daily_limit_count=max(1, user_limits_cfg.get("daily_limit_count", 10)),
             umo_blacklist=umo_blacklist,
             blacklist_block_message=blacklist_block_message,
-        )
-
-        # 缓存设置
-        self._plugin_config.cache_settings = CacheSettings(
-            max_cache_count=max(1, cache_cfg.get("max_cache_count", 100)),
-            cleanup_interval_hours=max(1, cache_cfg.get("cleanup_interval_hours", 24)),
         )
 
         # 生成设置
@@ -294,6 +219,191 @@ class ConfigManager:
     def reload(self) -> PluginConfig:
         """重新加载配置。"""
         return self.load()
+
+    def _get_config_section(self, name: str) -> dict[str, Any]:
+        """Return a dictionary config section, falling back to an empty dict."""
+        value = self._config.get(name, {})
+        if isinstance(value, dict):
+            return value
+        logger.warning(f"[ImageGen] 配置项 {name} 格式错误，已按空对象处理")
+        return {}
+
+    def _load_provider_configs(
+        self, raw_providers: Any, gen_cfg: dict[str, Any]
+    ) -> list[AdapterConfig]:
+        """Parse all provider templates into normalized adapter configs."""
+        if not isinstance(raw_providers, list):
+            logger.warning("[ImageGen] api_providers 配置格式错误，已按空列表处理")
+            return []
+
+        provider_configs: list[AdapterConfig] = []
+        for provider_item in raw_providers:
+            if not isinstance(provider_item, dict):
+                continue
+            if parsed := self._parse_provider_config(provider_item, gen_cfg):
+                provider_configs.append(parsed)
+        return provider_configs
+
+    def _parse_provider_config(
+        self,
+        provider_item: dict[str, Any],
+        gen_cfg: dict[str, Any],
+    ) -> AdapterConfig | None:
+        """Parse one provider item with global fallback and provider overrides."""
+        adapter_type = self._parse_adapter_type(provider_item)
+        if not adapter_type:
+            return None
+
+        base_url = str(provider_item.get("base_url") or "").strip()
+        proxy = str(provider_item.get("proxy") or "").strip() or None
+
+        return AdapterConfig(
+            type=adapter_type,
+            name=str(provider_item.get("name", "")).strip(),
+            base_url=self._clean_base_url(base_url),
+            api_keys=self._parse_string_list(provider_item.get("api_keys", [])),
+            available_models=self._parse_string_list(
+                provider_item.get("available_models", [])
+            ),
+            proxy=proxy,
+            timeout=self._get_provider_int_override(
+                provider_item,
+                gen_cfg,
+                "timeout",
+                DEFAULT_TIMEOUT,
+                min_value=1,
+            ),
+            max_retry_attempts=self._get_provider_int_override(
+                provider_item,
+                gen_cfg,
+                "max_retry_attempts",
+                DEFAULT_MAX_RETRY_ATTEMPTS,
+                min_value=0,
+            ),
+            capability_options=self._parse_capability_options(provider_item),
+            extra=self._parse_provider_extra(adapter_type, provider_item),
+        )
+
+    def _parse_adapter_type(self, provider_item: dict[str, Any]) -> AdapterType | None:
+        """Parse and validate the provider template key."""
+        adapter_type_str = str(provider_item.get("__template_key") or "").strip()
+        if not adapter_type_str:
+            return None
+
+        try:
+            return AdapterType(adapter_type_str)
+        except ValueError:
+            logger.warning(f"[ImageGen] 忽略未知适配器类型: {adapter_type_str}")
+            return None
+
+    def _get_provider_int_override(
+        self,
+        provider_item: dict[str, Any],
+        gen_cfg: dict[str, Any],
+        key: str,
+        default: int,
+        *,
+        min_value: int,
+    ) -> int:
+        """Resolve an integer provider override, using global config by default."""
+        global_value = self._coerce_int(
+            gen_cfg.get(key, default), default, min_value=min_value
+        )
+        if key not in provider_item:
+            return global_value
+
+        raw_value = provider_item.get(key)
+        if raw_value in (None, ""):
+            return global_value
+
+        provider_value = self._coerce_int(raw_value, global_value, min_value=0)
+        if provider_value <= 0:
+            return global_value
+        return max(min_value, provider_value)
+
+    def _coerce_int(self, value: Any, default: int, *, min_value: int) -> int:
+        """Safely coerce a value to int and clamp it."""
+        if isinstance(value, bool):
+            return default
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return default
+        return max(min_value, parsed)
+
+    def _parse_provider_extra(
+        self,
+        adapter_type: AdapterType,
+        provider_item: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Collect adapter-specific settings without changing parser code later."""
+        extra = dict(ADAPTER_EXTRA_DEFAULTS.get(adapter_type, {}))
+
+        for key in extra:
+            if key in provider_item:
+                extra[key] = self._normalize_extra_value(provider_item[key])
+
+        for key, value in provider_item.items():
+            if key in PROVIDER_COMMON_FIELDS or key.startswith("__"):
+                continue
+            extra.setdefault(key, self._normalize_extra_value(value))
+
+        return extra
+
+    def _normalize_extra_value(self, value: Any) -> Any:
+        """Normalize adapter-specific values before storing them in extra."""
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    def _parse_string_list(self, raw: Any) -> list[str]:
+        """Parse a list-like config value into non-empty strings."""
+        if not isinstance(raw, list):
+            return []
+        return [item for item in (str(v).strip() for v in raw) if item]
+
+    def _select_adapter_config(
+        self, provider_configs: list[AdapterConfig], model_setting: str
+    ) -> AdapterConfig | None:
+        """Select active provider config and attach full model choices."""
+        matched_config: AdapterConfig | None = None
+        current_model = ""
+
+        if "/" in model_setting:
+            target_provider_name, target_model = model_setting.split("/", 1)
+            for cfg in provider_configs:
+                if cfg.name == target_provider_name:
+                    matched_config = cfg
+                    current_model = target_model
+                    break
+
+        if not matched_config and provider_configs:
+            matched_config = provider_configs[0]
+            current_model = (
+                matched_config.available_models[0]
+                if matched_config.available_models
+                else ""
+            )
+            logger.info(
+                f"[ImageGen] 未匹配到当前模型配置，默认使用: {matched_config.name}/{current_model}"
+            )
+
+        if not matched_config:
+            logger.error("[ImageGen] 未找到任何有效的生图模型配置")
+            return None
+
+        return replace(
+            matched_config,
+            model=current_model,
+            available_models=self._build_model_choices(provider_configs),
+        )
+
+    def _build_model_choices(self, provider_configs: list[AdapterConfig]) -> list[str]:
+        """Build display model choices in provider/model format."""
+        choices: list[str] = []
+        for cfg in provider_configs:
+            choices.extend(f"{cfg.name}/{model}" for model in cfg.available_models)
+        return choices
 
     def _parse_capability_options(
         self, provider_item: dict[str, Any]
@@ -425,11 +535,6 @@ class ConfigManager:
     def usage_settings(self) -> UsageSettings:
         """用户使用限制设置。"""
         return self._plugin_config.usage_settings
-
-    @property
-    def cache_settings(self) -> CacheSettings:
-        """缓存设置。"""
-        return self._plugin_config.cache_settings
 
     @property
     def safety_audit_settings(self) -> SafetyAuditSettings:

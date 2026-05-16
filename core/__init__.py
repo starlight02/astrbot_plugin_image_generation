@@ -5,7 +5,6 @@ Core module for image generation plugin
 
 from .base_adapter import BaseImageAdapter
 from .config_manager import (
-    CacheSettings,
     ConfigManager,
     GenerationSettings,
     ImageAuditSettings,
@@ -66,7 +65,6 @@ __all__ = [
     # 配置数据类
     "PluginConfig",
     "UsageSettings",
-    "CacheSettings",
     "GenerationSettings",
     "PromptAuditSettings",
     "ImageAuditSettings",

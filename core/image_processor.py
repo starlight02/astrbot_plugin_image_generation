@@ -1,5 +1,5 @@
 """
-图片处理模块 - 下载、提取、缓存管理
+图片处理模块 - 下载、提取、临时文件保存
 """
 
 from __future__ import annotations
@@ -17,31 +17,26 @@ if TYPE_CHECKING:
 
 
 class ImageProcessor:
-    """图片处理器 - 负责图片下载、提取和缓存管理。"""
+    """图片处理器 - 负责图片下载、提取和临时文件保存。"""
 
-    def __init__(self, cache_dir: str, max_image_size_mb: int, max_cache_count: int):
-        self._cache_dir = cache_dir
+    def __init__(self, temp_dir: str, max_image_size_mb: int):
+        self._temp_dir = temp_dir
         self._max_image_size_mb = max_image_size_mb
-        self._max_cache_count = max_cache_count
-        self._ensure_cache_dir()
+        self._ensure_temp_dir()
 
-    def _ensure_cache_dir(self) -> None:
-        """确保缓存目录存在。"""
-        os.makedirs(self._cache_dir, exist_ok=True)
+    def _ensure_temp_dir(self) -> None:
+        """确保临时目录存在。"""
+        os.makedirs(self._temp_dir, exist_ok=True)
 
-    def update_settings(
-        self, max_image_size_mb: int | None = None, max_cache_count: int | None = None
-    ) -> None:
+    def update_settings(self, max_image_size_mb: int | None = None) -> None:
         """更新设置。"""
         if max_image_size_mb is not None:
             self._max_image_size_mb = max_image_size_mb
-        if max_cache_count is not None:
-            self._max_cache_count = max_cache_count
 
     @property
-    def cache_dir(self) -> str:
-        """获取缓存目录路径。"""
-        return self._cache_dir
+    def temp_dir(self) -> str:
+        """获取临时目录路径。"""
+        return self._temp_dir
 
     async def download_image(self, url: str) -> tuple[bytes, str] | None:
         """下载图片并返回二进制数据和 MIME 类型。"""
@@ -51,9 +46,9 @@ class ImageProcessor:
                 with open(url, "rb") as f:
                     data = f.read()
             else:
-                # 使用插件缓存目录
+                # 使用插件临时目录
                 file_name = f"ref_{hashlib.md5(url.encode()).hexdigest()[:10]}"
-                path = os.path.join(self._cache_dir, file_name)
+                path = os.path.join(self._temp_dir, file_name)
                 path = await download_image_by_url(url, path=path)
                 if path:
                     with open(path, "rb") as f:
@@ -89,7 +84,7 @@ class ImageProcessor:
         url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={user_id}&spec=640"
         try:
             file_name = f"avatar_{user_id}.jpg"
-            path = os.path.join(self._cache_dir, file_name)
+            path = os.path.join(self._temp_dir, file_name)
             path = await download_image_by_url(url, path=path)
             if path:
                 with open(path, "rb") as f:
@@ -154,41 +149,13 @@ class ImageProcessor:
                 continue
         return images_data
 
-    async def cleanup_cache(self) -> None:
-        """执行缓存清理。"""
-        if not os.path.exists(self._cache_dir):
-            return
-
-        files = []
-        for f in os.listdir(self._cache_dir):
-            path = os.path.join(self._cache_dir, f)
-            if os.path.isfile(path):
-                files.append((path, os.path.getmtime(path)))
-
-        # 按修改时间排序（旧的在前）
-        files.sort(key=lambda x: x[1])
-
-        # 按数量清理
-        if len(files) > self._max_cache_count:
-            to_delete = files[: len(files) - self._max_cache_count]
-            deleted_count = 0
-            for path, _ in to_delete:
-                try:
-                    os.remove(path)
-                    deleted_count += 1
-                except OSError as e:
-                    logger.debug(f"[ImageGen] 删除缓存文件失败: {path} - {e}")
-            logger.info(
-                f"[ImageGen] 已清理 {deleted_count}/{len(to_delete)} 个旧缓存文件 (按数量)"
-            )
-
     def save_generated_image(self, task_id: str, img_bytes: bytes) -> str | None:
-        """保存生成的图片到缓存目录，返回文件路径。"""
+        """保存生成的图片到临时目录，返回文件路径。"""
         try:
             import time
 
             file_name = f"gen_{task_id}_{int(time.time())}_{hashlib.md5(img_bytes).hexdigest()[:6]}.png"
-            file_path = os.path.join(self._cache_dir, file_name)
+            file_path = os.path.join(self._temp_dir, file_name)
             with open(file_path, "wb") as f:
                 f.write(img_bytes)
             return file_path
