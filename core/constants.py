@@ -126,6 +126,9 @@ GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
 OPENAI_DEFAULT_BASE_URL = "https://api.openai.com"
 """OpenAI API 默认 Base URL。"""
 
+SILICONFLOW_DEFAULT_BASE_URL = "https://api.siliconflow.cn"
+"""SiliconFlow API 默认 Base URL。"""
+
 GITEE_AI_DEFAULT_BASE_URL = "https://ai.gitee.com"
 """Gitee AI 默认 Base URL。"""
 

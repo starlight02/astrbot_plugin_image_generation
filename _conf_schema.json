@@ -256,6 +256,109 @@
           }
         }
       },
+      "siliconflow_adapter": {
+        "name": "硅基流动接口",
+        "hint": "使用 SiliconFlow /v1/images/generations 图像生成接口",
+        "items": {
+          "name": {
+            "description": "适配器名称",
+            "hint": "用于区分不同适配器的名称,生图模型格式为 '适配器名称/模型名称'",
+            "type": "string",
+            "default": "硅基流动"
+          },
+          "base_url": {
+            "description": "API Base URL",
+            "hint": "默认 https://api.siliconflow.cn；也可填写包含 /v1 的地址，插件会自动清理",
+            "type": "string",
+            "default": "https://api.siliconflow.cn"
+          },
+          "proxy": {
+            "description": "代理地址",
+            "hint": "例如: http://127.0.0.1:7890",
+            "type": "string",
+            "default": ""
+          },
+          "api_keys": {
+            "description": "API Keys",
+            "hint": "SiliconFlow API Key，按 Bearer Token 发送",
+            "type": "list",
+            "default": []
+          },
+          "available_models": {
+            "description": "可用模型列表",
+            "hint": "用于 /生图模型 命令切换时的可选模型。Qwen-Image-Edit 系列支持多参考图。",
+            "type": "list",
+            "default": [
+              "Kwai-Kolors/Kolors",
+              "Qwen/Qwen-Image",
+              "Qwen/Qwen-Image-Edit",
+              "Qwen/Qwen-Image-Edit-2509"
+            ]
+          },
+          "capability_options": {
+            "description": "模型能力",
+            "hint": "按模型实际能力覆盖渠道默认能力。Qwen-Image-Edit-2509 可使用最多 3 张参考图。",
+            "type": "list",
+            "options": [
+              "文生图",
+              "图生图",
+              "宽高比",
+              "分辨率"
+            ],
+            "default": [
+              "文生图",
+              "图生图",
+              "宽高比",
+              "分辨率"
+            ]
+          },
+          "timeout": {
+            "description": "生图超时时间覆盖（秒）",
+            "hint": "留空或填 0 表示使用 generation 中的公共超时时间配置",
+            "type": "int",
+            "slider": {
+              "min": 0,
+              "max": 600,
+              "step": 10
+            },
+            "default": 0
+          },
+          "max_retry_attempts": {
+            "description": "最大重试次数覆盖",
+            "hint": "留空或填 0 表示使用 generation 中的公共重试次数配置",
+            "type": "int",
+            "slider": {
+              "min": 0,
+              "max": 10,
+              "step": 1
+            },
+            "default": 0
+          },
+          "negative_prompt": {
+            "description": "反向提示词",
+            "hint": "可选，发送为 negative_prompt",
+            "type": "string",
+            "default": ""
+          },
+          "num_inference_steps": {
+            "description": "推理步数",
+            "hint": "范围 1-100，留空则不发送该字段",
+            "type": "int",
+            "slider": {
+              "min": 0,
+              "max": 100,
+              "step": 1
+            },
+            "default": 20
+          },
+          "guidance_scale": {
+            "description": "提示词遵循强度",
+            "hint": "范围 0-20。Kolors 明确支持；Qwen 编辑示例中也可传入，留空则不发送。",
+            "type": "string",
+            "default": "7.5"
+          }
+        }
+      },
       "z_image_gitee": {
         "name": "Z-Image (Gitee) 接口",
         "hint": "使用Gitee的 Z-Image 图像生成接口",
