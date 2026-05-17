@@ -136,8 +136,10 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
 
         try:
             if capabilities & ImageCapability.IMAGE_TO_IMAGE:
+                avatar_user_ids: set[str] = set()
                 images_data = await plugin.image_processor.fetch_images_from_event(
-                    event
+                    event,
+                    avatar_user_ids=avatar_user_ids,
                 )
 
                 # 处理头像引用参数
@@ -159,7 +161,8 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
                             if ref.isdigit():
                                 user_id = ref
 
-                        if user_id:
+                        if user_id and user_id not in avatar_user_ids:
+                            avatar_user_ids.add(user_id)
                             avatar_data = await plugin.image_processor.get_avatar(
                                 user_id
                             )

@@ -94,26 +94,17 @@ class ImageProcessor:
         return None
 
     async def fetch_images_from_event(
-        self, event: AstrMessageEvent
+        self,
+        event: AstrMessageEvent,
+        avatar_user_ids: set[str] | None = None,
     ) -> list[tuple[bytes, str]]:
         """从消息事件中提取图片（包括直接发送的图片、引用消息中的图片、被@用户的头像）。"""
         images_data: list[tuple[bytes, str]] = []
+        if avatar_user_ids is None:
+            avatar_user_ids = set()
 
         if not event.message_obj or not event.message_obj.message:
             return images_data
-
-        # 预扫描：记录引用消息的发送者以及各个 @ 出现次数，用于过滤自动 @
-        reply_sender_id = None
-        at_counts: dict[str, int] = {}
-
-        for component in event.message_obj.message:
-            if isinstance(component, Comp.Reply):
-                if hasattr(component, "sender_id") and component.sender_id:
-                    reply_sender_id = str(component.sender_id)
-            elif isinstance(component, Comp.At):
-                if hasattr(component, "qq") and component.qq != "all":
-                    uid = str(component.qq)
-                    at_counts[uid] = at_counts.get(uid, 0) + 1
 
         for component in event.message_obj.message:
             try:
@@ -134,14 +125,9 @@ class ImageProcessor:
                     # 处理 @ 用户的头像
                     if hasattr(component, "qq") and component.qq != "all":
                         uid = str(component.qq)
-                        # 引用消息带来的单次自动 @ 默认忽略头像，除非用户再次显式 @
-                        if reply_sender_id and uid == reply_sender_id:
-                            if at_counts.get(uid, 0) == 1:
-                                continue
-                        self_id = str(event.get_self_id()).strip()
-                        # 机器人单次被 @ 多为触发前缀，默认不取机器人头像
-                        if self_id and uid == self_id and at_counts.get(uid, 0) == 1:
+                        if uid in avatar_user_ids:
                             continue
+                        avatar_user_ids.add(uid)
                         if avatar_data := await self.get_avatar(uid):
                             images_data.append((avatar_data, "image/jpeg"))
             except Exception as e:
