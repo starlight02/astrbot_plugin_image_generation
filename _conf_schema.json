@@ -14,6 +14,7 @@
         "name": "Gemini 接口",
         "hint": "使用 Gemini 的图像生成接口",
         "display_item": "name",
+        "hide_hint_in_list": true,
         "items": {
           "name": {
             "description": "适配器名称",
@@ -94,6 +95,7 @@
         "name": "Gemini OpenAI兼容接口",
         "hint": "使用兼容Openai格式的 Gemini图像生成接口",
         "display_item": "name",
+        "hide_hint_in_list": true,
         "items": {
           "name": {
             "description": "适配器名称",
@@ -171,6 +173,7 @@
         "name": "OpenAI 接口",
         "hint": "使用 OpenAI 的图像生成接口",
         "display_item": "name",
+        "hide_hint_in_list": true,
         "items": {
           "name": {
             "description": "适配器名称",
@@ -263,6 +266,7 @@
         "name": "硅基流动接口",
         "hint": "使用 SiliconFlow /v1/images/generations 图像生成接口",
         "display_item": "name",
+        "hide_hint_in_list": true,
         "items": {
           "name": {
             "description": "适配器名称",
@@ -367,6 +371,7 @@
         "name": "Z-Image (Gitee) 接口",
         "hint": "使用Gitee的 Z-Image 图像生成接口",
         "display_item": "name",
+        "hide_hint_in_list": true,
         "items": {
           "name": {
             "description": "适配器名称",
@@ -444,6 +449,7 @@
         "name": "即梦逆向生图接口",
         "hint": "使用[iptag/jimeng-api]项目的图像生成接口",
         "display_item": "name",
+        "hide_hint_in_list": true,
         "items": {
           "name": {
             "description": "适配器名称",
@@ -523,6 +529,7 @@
         "name": "Grok (xAI) 接口",
         "hint": "使用 Grok 的图像生成接口",
         "display_item": "name",
+        "hide_hint_in_list": true,
         "items": {
           "name": {
             "description": "适配器名称",
