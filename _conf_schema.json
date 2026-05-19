@@ -297,9 +297,9 @@
             "hint": "用于 /生图模型 命令切换。请按控制台实际 Model ID 或 Endpoint ID 修改。",
             "type": "list",
             "default": [
-              "doubao-seedream-5.0-lite",
-              "doubao-seedream-4.5",
-              "doubao-seedream-4.0"
+              "doubao-seedream-5-0-260128",
+              "doubao-seedream-4-5-251128",
+              "doubao-seedream-4-0-250828"
             ]
           },
           "capability_options": {
