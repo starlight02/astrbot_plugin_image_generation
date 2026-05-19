@@ -19,9 +19,17 @@ if TYPE_CHECKING:
 class ImageProcessor:
     """图片处理器 - 负责图片下载、提取和临时文件保存。"""
 
-    def __init__(self, temp_dir: str, max_image_size_mb: int):
+    def __init__(
+        self,
+        temp_dir: str,
+        max_image_size_mb: int,
+        local_base_dir: str | None = None,
+    ) -> None:
         self._temp_dir = temp_dir
         self._max_image_size_mb = max_image_size_mb
+        self._local_base_dir = (
+            os.path.realpath(local_base_dir) if local_base_dir else ""
+        )
         self._ensure_temp_dir()
 
     def _ensure_temp_dir(self) -> None:
@@ -38,12 +46,34 @@ class ImageProcessor:
         """获取临时目录路径。"""
         return self._temp_dir
 
+    def _resolve_local_path(self, value: str) -> str | None:
+        """Resolve an absolute/local plugin-data file path if available."""
+        if os.path.exists(value) and os.path.isfile(value):
+            return value
+
+        rel_path = value.replace("\\", "/").lstrip("/")
+        if not self._local_base_dir or not rel_path.startswith("files/"):
+            return None
+
+        candidate = os.path.realpath(os.path.join(self._local_base_dir, rel_path))
+        try:
+            if (
+                os.path.commonpath([self._local_base_dir, candidate])
+                != self._local_base_dir
+            ):
+                return None
+        except ValueError:
+            return None
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return candidate
+        return None
+
     async def download_image(self, url: str) -> tuple[bytes, str] | None:
-        """下载图片并返回二进制数据和 MIME 类型。"""
+        """下载或读取图片并返回二进制数据和 MIME 类型。"""
         try:
             data: bytes | None = None
-            if os.path.exists(url) and os.path.isfile(url):
-                with open(url, "rb") as f:
+            if local_path := self._resolve_local_path(url):
+                with open(local_path, "rb") as f:
                     data = f.read()
             else:
                 # 使用插件临时目录

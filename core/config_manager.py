@@ -60,6 +60,15 @@ class GenerationSettings:
 
 
 @dataclass
+class PersonaTemplate:
+    """生图人设模板。"""
+
+    name: str
+    prompt: str
+    image: str = ""
+
+
+@dataclass
 class PromptAuditSettings:
     """生图前提示词审核设置。"""
 
@@ -105,6 +114,7 @@ class PluginConfig:
         default_factory=SafetyAuditSettings
     )
     presets: dict[str, Any] = field(default_factory=dict)
+    personas: dict[str, PersonaTemplate] = field(default_factory=dict)
     enable_llm_tool: bool = True
 
 
@@ -122,6 +132,7 @@ class ConfigManager:
         gen_cfg = self._get_config_section("generation")
         user_limits_cfg = self._get_config_section("user_limits")
         safety_cfg = self._get_config_section("safety_audit")
+        prompt_templates_cfg = self._get_config_section("prompt_templates")
         api_providers_raw = self._config.get("api_providers", [])
 
         self._plugin_config.enable_llm_tool = self._config.get("enable_llm_tool", True)
@@ -220,7 +231,10 @@ class ConfigManager:
 
         # 预设
         self._plugin_config.presets = self._load_presets(
-            self._config.get("presets", [])
+            prompt_templates_cfg.get("presets", self._config.get("presets", []))
+        )
+        self._plugin_config.personas = self._load_personas(
+            prompt_templates_cfg.get("personas", self._config.get("personas", []))
         )
 
         return self._plugin_config
@@ -475,6 +489,61 @@ class ConfigManager:
                     presets[name.strip()] = prompt.strip()
         return presets
 
+    def _get_writable_prompt_templates_config(self) -> dict[str, Any]:
+        """Return the grouped prompt-template config for command-side updates."""
+        value = self._config.setdefault("prompt_templates", {})
+        if isinstance(value, dict):
+            return value
+        logger.warning("[ImageGen] prompt_templates 配置格式错误，已重置为空对象")
+        value = {}
+        self._config["prompt_templates"] = value
+        return value
+
+    def _save_presets_config(self) -> None:
+        prompt_templates_cfg = self._get_writable_prompt_templates_config()
+        prompt_templates_cfg["presets"] = [
+            f"{k}:{v}" for k, v in self._plugin_config.presets.items()
+        ]
+        self._config.save_config()
+
+    def _load_personas(self, personas_config: Any) -> dict[str, PersonaTemplate]:
+        """加载人设模板配置。"""
+        personas: dict[str, PersonaTemplate] = {}
+        if not isinstance(personas_config, list):
+            return personas
+
+        for item in personas_config:
+            if not isinstance(item, dict):
+                continue
+
+            name = str(item.get("persona_name") or item.get("name") or "").strip()
+            prompt = str(
+                item.get("persona_prompt") or item.get("prompt") or ""
+            ).strip()
+            image = self._parse_file_value(
+                item.get("persona_image")
+                or item.get("image")
+                or item.get("reference_image")
+            )
+            if name and (prompt or image):
+                personas[name] = PersonaTemplate(name=name, prompt=prompt, image=image)
+        return personas
+
+    def _parse_file_value(self, raw: Any) -> str:
+        """从 file 配置值中提取首个可用文件路径或 URL。"""
+        if isinstance(raw, str):
+            return raw.strip()
+        if isinstance(raw, list):
+            for item in raw:
+                if parsed := self._parse_file_value(item):
+                    return parsed
+            return ""
+        if isinstance(raw, dict):
+            for key in ("path", "file", "url", "name"):
+                if parsed := self._parse_file_value(raw.get(key)):
+                    return parsed
+        return ""
+
     def save_model_setting(self, model: str) -> None:
         """保存模型设置。"""
         self._config.setdefault("generation", {})["model"] = model
@@ -483,19 +552,13 @@ class ConfigManager:
     def save_preset(self, name: str, content: str) -> None:
         """保存预设。"""
         self._plugin_config.presets[name] = content
-        self._config["presets"] = [
-            f"{k}:{v}" for k, v in self._plugin_config.presets.items()
-        ]
-        self._config.save_config()
+        self._save_presets_config()
 
     def delete_preset(self, name: str) -> bool:
         """删除预设，返回是否成功。"""
         if name in self._plugin_config.presets:
             del self._plugin_config.presets[name]
-            self._config["presets"] = [
-                f"{k}:{v}" for k, v in self._plugin_config.presets.items()
-            ]
-            self._config.save_config()
+            self._save_presets_config()
             return True
         return False
 
@@ -509,6 +572,11 @@ class ConfigManager:
     def presets(self) -> dict[str, Any]:
         """获取预设字典。"""
         return self._plugin_config.presets
+
+    @property
+    def personas(self) -> dict[str, PersonaTemplate]:
+        """获取人设模板字典。"""
+        return self._plugin_config.personas
 
     @property
     def enable_llm_tool(self) -> bool:

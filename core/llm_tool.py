@@ -34,7 +34,11 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "生图时使用的提示词(要将用户的意图原样传达给模型)。如果用户提到了画图但没有具体描述，请根据上下文推断或提示用户描述。",
+                    "description": "生图时使用的提示词(要将用户的意图原样传达给模型)。如果设置了 persona，可只填写额外提示词或留空。",
+                },
+                "persona": {
+                    "type": "string",
+                    "description": "可选。使用已配置的人设名称，会将人设描述拼接到提示词前，并在支持图生图时加入人设参考图。",
                 },
                 "aspect_ratio": {
                     "type": "string",
@@ -66,7 +70,7 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
                     "items": {"type": "string"},
                 },
             },
-            "required": ["prompt"],
+            "required": [],
         }
     )
 
@@ -78,14 +82,28 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
         self, context: ContextWrapper[AstrAgentContext], **kwargs: Any
     ) -> ToolExecResult:
         """执行工具调用。"""
-        # 获取提示词
-        prompt = kwargs.get("prompt", "").strip()
-        if not prompt:
-            return "❌ 请提供图片生成的提示词"
-
         plugin = self.plugin
         if not plugin:
             return "❌ 插件未正确初始化 (Plugin instance missing)"
+
+        # 获取提示词和人设
+        prompt = str(kwargs.get("prompt", "") or "").strip()
+        persona_name = str(kwargs.get("persona", "") or "").strip()
+        matched_persona = None
+        persona_image = ""
+        if persona_name:
+            matched_persona = plugin._find_named_entry(
+                plugin.config_manager.personas,
+                persona_name,
+            )
+            if not matched_persona:
+                return f"❌ 人设不存在: {persona_name}"
+            persona = plugin.config_manager.personas[matched_persona]
+            prompt = f"{persona.prompt} {prompt}".strip()
+            persona_image = persona.image
+
+        if not prompt:
+            return "❌ 请提供图片生成的提示词或人设"
 
         # 获取事件上下文
         event = None
@@ -137,9 +155,20 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
         try:
             if capabilities & ImageCapability.IMAGE_TO_IMAGE:
                 avatar_user_ids: set[str] = set()
-                images_data = await plugin.image_processor.fetch_images_from_event(
-                    event,
-                    avatar_user_ids=avatar_user_ids,
+                if persona_image:
+                    if persona_image_data := await plugin.image_processor.download_image(
+                        persona_image
+                    ):
+                        images_data.append(persona_image_data)
+                    else:
+                        logger.warning(
+                            f"[ImageGen] 人设参考图获取失败: {matched_persona}"
+                        )
+                images_data.extend(
+                    await plugin.image_processor.fetch_images_from_event(
+                        event,
+                        avatar_user_ids=avatar_user_ids,
+                    )
                 )
 
                 # 处理头像引用参数
@@ -201,7 +230,8 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
         return plugin.format_start_task_message(
             prompt=prompt,
             reference_image_count=len(images_data),
-            preset=None,
+            preset=matched_persona,
+            preset_label="人设" if matched_persona else "预设",
             aspect_ratio=aspect_ratio,
             resolution=resolution,
             task_id=task_id,

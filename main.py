@@ -62,6 +62,7 @@ class ImageGenerationPlugin(Star):
         self.image_processor = ImageProcessor(
             str(self.image_temp_dir),
             self.config_manager.usage_settings.max_image_size_mb,
+            str(self.data_dir),
         )
 
         # 初始化任务管理器
@@ -160,10 +161,25 @@ class ImageGenerationPlugin(Star):
             return
         capabilities = self.generator.adapter.get_capabilities()
         adjust_tool_parameters(tool, capabilities)
+        props = tool.parameters.get("properties", {})
+        if not self.config_manager.personas:
+            props.pop("persona", None)
+        elif isinstance(props.get("persona"), dict):
+            props["persona"]["enum"] = list(self.config_manager.personas)
 
     def create_background_task(self, coro: Coroutine[Any, Any, Any]) -> asyncio.Task:
         """创建后台任务并添加到管理器中。"""
         return self.task_manager.create_task(coro)
+
+    def _find_named_entry(self, entries: dict[str, Any], token: str) -> str | None:
+        """Find an entry by exact or case-insensitive name."""
+        if token in entries:
+            return token
+        lowered_token = token.lower()
+        for name in entries:
+            if name.lower() == lowered_token:
+                return name
+        return None
 
     def format_start_task_message(
         self,
@@ -171,6 +187,7 @@ class ImageGenerationPlugin(Star):
         prompt: str,
         reference_image_count: int,
         preset: str | None,
+        preset_label: str = "预设",
         aspect_ratio: str,
         resolution: str,
         task_id: str,
@@ -199,7 +216,7 @@ class ImageGenerationPlugin(Star):
             reference_images_block=(
                 f"[{reference_image_count}张参考图]" if reference_image_count else ""
             ),
-            preset_block=f"[预设: {preset}]" if preset else "",
+            preset_block=f"[{preset_label}: {preset}]" if preset else "",
         )
 
         try:
@@ -398,20 +415,24 @@ class ImageGenerationPlugin(Star):
 
         # 检查是否命中预设
         matched_preset = None
+        matched_persona = None
+        persona_image = ""
         extra_content = ""
         if prompt:
             parts = prompt.split(maxsplit=1)
             first_token = parts[0]
             rest = parts[1] if len(parts) > 1 else ""
-            if first_token in self.config_manager.presets:
-                matched_preset = first_token
+            matched_preset = self._find_named_entry(
+                self.config_manager.presets, first_token
+            )
+            if matched_preset:
                 extra_content = rest
             else:
-                for name in self.config_manager.presets:
-                    if name.lower() == first_token.lower():
-                        matched_preset = name
-                        extra_content = rest
-                        break
+                matched_persona = self._find_named_entry(
+                    self.config_manager.personas, first_token
+                )
+                if matched_persona:
+                    extra_content = rest
 
         if matched_preset:
             logger.info(f"[ImageGen] 命中预设: {matched_preset}")
@@ -436,6 +457,14 @@ class ImageGenerationPlugin(Star):
             if extra_content:
                 prompt = f"{prompt} {extra_content}"
 
+        if matched_persona:
+            logger.info(f"[ImageGen] 命中人设: {matched_persona}")
+            persona = self.config_manager.personas[matched_persona]
+            prompt = persona.prompt
+            persona_image = persona.image
+            if extra_content:
+                prompt = f"{prompt} {extra_content}".strip()
+
         if not prompt:
             yield event.plain_result("❌ 请提供图片生成的提示词或预设名称！")
             return
@@ -457,14 +486,25 @@ class ImageGenerationPlugin(Star):
                 & ImageCapability.IMAGE_TO_IMAGE
             )
         ):
-            images_data = await self.image_processor.fetch_images_from_event(event)
+            images_data = []
+            if persona_image:
+                if persona_image_data := await self.image_processor.download_image(
+                    persona_image
+                ):
+                    images_data.append(persona_image_data)
+                else:
+                    logger.warning(
+                        f"[ImageGen] 人设参考图获取失败: {matched_persona}"
+                    )
+            images_data.extend(await self.image_processor.fetch_images_from_event(event))
 
         task_id = hashlib.md5(f"{time.time()}{user_id}".encode()).hexdigest()[:8]
 
         msg = self.format_start_task_message(
             prompt=prompt,
             reference_image_count=len(images_data or []),
-            preset=matched_preset,
+            preset=matched_preset or matched_persona,
+            preset_label="人设" if matched_persona else "预设",
             aspect_ratio=aspect_ratio,
             resolution=resolution,
             task_id=task_id,
@@ -536,15 +576,32 @@ class ImageGenerationPlugin(Star):
         cmd_text = parts[1].strip() if len(parts) > 1 else ""
 
         if not cmd_text:
-            if not self.config_manager.presets:
-                yield event.plain_result("📋 当前没有预设")
+            if not self.config_manager.presets and not self.config_manager.personas:
+                yield event.plain_result("📋 当前没有预设或人设")
                 return
-            preset_list = ["📋 预设列表:"]
+            preset_list = []
+            if self.config_manager.presets:
+                preset_list.append("📋 预设列表:")
             for idx, (name, prompt) in enumerate(
                 self.config_manager.presets.items(), 1
             ):
                 display = prompt[:20] + "..." if len(prompt) > 20 else prompt
                 preset_list.append(f"{idx}. {name}: {display}")
+
+            if self.config_manager.personas:
+                if preset_list:
+                    preset_list.append("")
+                preset_list.append("👤 人设列表:")
+                for idx, (name, persona) in enumerate(
+                    self.config_manager.personas.items(), 1
+                ):
+                    display = (
+                        persona.prompt[:20] + "..."
+                        if len(persona.prompt) > 20
+                        else persona.prompt
+                    )
+                    image_mark = "有参考图" if persona.image else "无参考图"
+                    preset_list.append(f"{idx}. {name}: {display} [{image_mark}]")
             yield event.plain_result("\n".join(preset_list))
             return
 
