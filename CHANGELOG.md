@@ -1,5 +1,14 @@
 ### 更新日志
 
+- **v1.1.0-2026-05-21**
+  - 新增人设模板：可在配置中维护人设名称、固定提示词和可选参考图，并通过 `/生图 <人设名称> [额外提示词]` 或 LLM 生图工具直接使用。
+  - 将提示词模板配置统一到 `prompt_templates`，预设迁移为 `prompt_templates.presets`，人设模板放入 `prompt_templates.personas`。
+  - 重构 LLM 工具：保留统一的 `generate_image`，覆盖普通生图、预设生图、人设/自拍生图和图生图，并支持 `preset`、`persona`、`reference_images`、`avatar_references` 等参数。
+  - 新增独立的 `query_image_presets` 和 `edit_image_presets` 工具，分别用于查询预设/人设列表与详情，以及创建、删除预设。
+  - LLM 工具开关改为可多选的工具列表，可分别启用生图、预设查询和预设编辑能力。
+  - 优化参考图收集：可同时使用人设参考图、显式参考图、消息图片、引用消息图片、@ 用户头像和指定用户头像。
+  - 完善本地图片来源解析：支持 Linux/Windows 绝对路径、`file://` 文件 URL、HTTP(S) 图片 URL，并兼容 AstrBot 文件配置返回的插件数据 `files/...` 路径。
+
 - **v1.0.7-2026-05-19**
   - 新增火山方舟适配器 `volcengine_ark`，支持 Seedream 图片生成接口 `/api/v3/images/generations`。
   - 支持火山方舟文生图、图生图、组图参数、自动尺寸映射和可选联网搜索配置。

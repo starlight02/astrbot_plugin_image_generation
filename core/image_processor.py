@@ -50,13 +50,28 @@ class ImageProcessor:
         return self._temp_dir
 
     def _resolve_local_path(self, value: str) -> str | None:
-        """Resolve an absolute local path or file:// URI if available."""
+        """Resolve an absolute local path, file:// URI, or plugin file path."""
         value = self._normalize_local_path_value(value)
-        if not self._is_absolute_path(value):
-            return None
-        if os.path.exists(value) and os.path.isfile(value):
-            return value
-        logger.warning(f"[ImageGen] 本地参考图不存在或不是文件: {value}")
+        candidates = []
+        if self._is_absolute_path(value):
+            candidates.append(value)
+        elif self._local_base_dir and value.replace("\\", "/").startswith("files/"):
+            candidate = os.path.realpath(os.path.join(self._local_base_dir, value))
+            try:
+                if (
+                    os.path.commonpath([self._local_base_dir, candidate])
+                    != self._local_base_dir
+                ):
+                    return None
+            except ValueError:
+                return None
+            candidates.append(candidate)
+
+        for candidate in candidates:
+            path = os.path.realpath(candidate)
+            if os.path.exists(path) and os.path.isfile(path):
+                return path
+            logger.warning(f"[ImageGen] 本地参考图不存在或不是文件: {path}")
         return None
 
     def _is_absolute_path(self, value: str) -> bool:
