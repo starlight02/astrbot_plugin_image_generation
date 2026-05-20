@@ -20,10 +20,20 @@ from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.star.star_tools import StarTools
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 
-from .core.config_manager import ConfigManager
+from .core.config_manager import (
+    LLM_TOOL_IMAGE_GENERATION,
+    LLM_TOOL_PRESET_EDIT,
+    LLM_TOOL_PRESET_QUERY,
+    ConfigManager,
+)
 from .core.generator import ImageGenerator
 from .core.image_processor import ImageProcessor
-from .core.llm_tool import ImageGenerationTool, adjust_tool_parameters
+from .core.llm_tool import (
+    ImageGenerationTool,
+    PresetEditTool,
+    PresetQueryTool,
+    adjust_tool_parameters,
+)
 from .core.safety_auditor import SafetyAuditor
 from .core.task_manager import TaskManager
 from .core.types import GenerationRequest, ImageCapability, ImageData
@@ -86,11 +96,7 @@ class ImageGenerationPlugin(Star):
             logger.error("[ImageGen] 适配器配置加载失败，插件未初始化")
 
         # 注册 LLM 工具
-        if self.config_manager.enable_llm_tool and self.generator:
-            tool = ImageGenerationTool(plugin=self)
-            self._adjust_tool_parameters(tool)
-            self.context.add_llm_tools(tool)
-            logger.info("[ImageGen] 已注册图像生成工具")
+        self._register_llm_tools()
 
         # 配置定时任务
         self._setup_tasks()
@@ -118,6 +124,29 @@ class ImageGenerationPlugin(Star):
         """配置并启动定时任务。"""
         # Jimeng2API 自动领积分任务
         self._setup_jimeng_token_task()
+
+    def _register_llm_tools(self) -> None:
+        """Register enabled LLM tools."""
+        tools = []
+        if self.config_manager.is_llm_tool_enabled(LLM_TOOL_IMAGE_GENERATION):
+            if self.generator:
+                image_tool = ImageGenerationTool(plugin=self)
+                self._adjust_tool_parameters(image_tool)
+                tools.append(image_tool)
+            else:
+                logger.warning("[ImageGen] 生图工具已启用，但生成器未初始化")
+
+        if self.config_manager.is_llm_tool_enabled(LLM_TOOL_PRESET_QUERY):
+            tools.append(PresetQueryTool(plugin=self))
+
+        if self.config_manager.is_llm_tool_enabled(LLM_TOOL_PRESET_EDIT):
+            tools.append(PresetEditTool(plugin=self))
+
+        if tools:
+            self.context.add_llm_tools(*tools)
+            logger.info(
+                "[ImageGen] 已注册 LLM 工具: " + ", ".join(tool.name for tool in tools)
+            )
 
     def _setup_jimeng_token_task(self) -> None:
         """配置即梦自动领积分任务。
@@ -493,10 +522,10 @@ class ImageGenerationPlugin(Star):
                 ):
                     images_data.append(persona_image_data)
                 else:
-                    logger.warning(
-                        f"[ImageGen] 人设参考图获取失败: {matched_persona}"
-                    )
-            images_data.extend(await self.image_processor.fetch_images_from_event(event))
+                    logger.warning(f"[ImageGen] 人设参考图获取失败: {matched_persona}")
+            images_data.extend(
+                await self.image_processor.fetch_images_from_event(event)
+            )
 
         task_id = hashlib.md5(f"{time.time()}{user_id}".encode()).hexdigest()[:8]
 

@@ -32,6 +32,15 @@ ADAPTER_EXTRA_DEFAULTS: dict[AdapterType, dict[str, Any]] = {
     AdapterType.OPENAI: {"model_family": "auto"},
 }
 
+LLM_TOOL_IMAGE_GENERATION = "生图工具"
+LLM_TOOL_PRESET_QUERY = "预设查询工具"
+LLM_TOOL_PRESET_EDIT = "预设编辑工具"
+ALL_LLM_TOOLS = (
+    LLM_TOOL_IMAGE_GENERATION,
+    LLM_TOOL_PRESET_QUERY,
+    LLM_TOOL_PRESET_EDIT,
+)
+
 
 @dataclass
 class UsageSettings:
@@ -115,7 +124,7 @@ class PluginConfig:
     )
     presets: dict[str, Any] = field(default_factory=dict)
     personas: dict[str, PersonaTemplate] = field(default_factory=dict)
-    enable_llm_tool: bool = True
+    enabled_llm_tools: set[str] = field(default_factory=lambda: set(ALL_LLM_TOOLS))
 
 
 class ConfigManager:
@@ -135,7 +144,11 @@ class ConfigManager:
         prompt_templates_cfg = self._get_config_section("prompt_templates")
         api_providers_raw = self._config.get("api_providers", [])
 
-        self._plugin_config.enable_llm_tool = self._config.get("enable_llm_tool", True)
+        self._plugin_config.enabled_llm_tools = set(
+            self._parse_enabled_llm_tools(
+                self._config.get("enable_llm_tool", list(ALL_LLM_TOOLS))
+            )
+        )
 
         all_provider_configs = self._load_provider_configs(api_providers_raw, gen_cfg)
 
@@ -231,10 +244,10 @@ class ConfigManager:
 
         # 预设
         self._plugin_config.presets = self._load_presets(
-            prompt_templates_cfg.get("presets", self._config.get("presets", []))
+            prompt_templates_cfg.get("presets", [])
         )
         self._plugin_config.personas = self._load_personas(
-            prompt_templates_cfg.get("personas", self._config.get("personas", []))
+            prompt_templates_cfg.get("personas", [])
         )
 
         return self._plugin_config
@@ -250,6 +263,22 @@ class ConfigManager:
             return value
         logger.warning(f"[ImageGen] 配置项 {name} 格式错误，已按空对象处理")
         return {}
+
+    def _parse_enabled_llm_tools(self, raw: Any) -> list[str]:
+        """Parse enabled LLM tool names from list config."""
+        if isinstance(raw, bool):
+            return list(ALL_LLM_TOOLS) if raw else []
+
+        if not isinstance(raw, list):
+            logger.warning("[ImageGen] enable_llm_tool 配置格式错误，已按空列表处理")
+            return []
+
+        selected: list[str] = []
+        for item in raw:
+            tool_name = str(item).strip()
+            if tool_name in ALL_LLM_TOOLS and tool_name not in selected:
+                selected.append(tool_name)
+        return selected
 
     def _load_provider_configs(
         self, raw_providers: Any, gen_cfg: dict[str, Any]
@@ -517,9 +546,7 @@ class ConfigManager:
                 continue
 
             name = str(item.get("persona_name") or item.get("name") or "").strip()
-            prompt = str(
-                item.get("persona_prompt") or item.get("prompt") or ""
-            ).strip()
+            prompt = str(item.get("persona_prompt") or item.get("prompt") or "").strip()
             image = self._parse_file_value(
                 item.get("persona_image")
                 or item.get("image")
@@ -580,8 +607,12 @@ class ConfigManager:
 
     @property
     def enable_llm_tool(self) -> bool:
-        """是否启用 LLM 工具。"""
-        return self._plugin_config.enable_llm_tool
+        """是否启用任意 LLM 工具。"""
+        return bool(self._plugin_config.enabled_llm_tools)
+
+    def is_llm_tool_enabled(self, tool_name: str) -> bool:
+        """检查指定 LLM 工具是否启用。"""
+        return tool_name in self._plugin_config.enabled_llm_tools
 
     @property
     def default_aspect_ratio(self) -> str:

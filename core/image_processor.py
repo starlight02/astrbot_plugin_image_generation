@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import os
 from typing import TYPE_CHECKING
+from urllib.parse import unquote, urlparse
 
 import astrbot.api.message_components as Comp
 from astrbot.api import logger
@@ -48,6 +49,7 @@ class ImageProcessor:
 
     def _resolve_local_path(self, value: str) -> str | None:
         """Resolve an absolute/local plugin-data file path if available."""
+        value = self._normalize_local_path_value(value)
         if os.path.exists(value) and os.path.isfile(value):
             return value
 
@@ -67,6 +69,28 @@ class ImageProcessor:
         if os.path.exists(candidate) and os.path.isfile(candidate):
             return candidate
         return None
+
+    def _normalize_local_path_value(self, value: str) -> str:
+        """Normalize local file paths, including file:// URI values."""
+        value = value.strip()
+        if not value.lower().startswith("file:"):
+            return value
+
+        parsed = urlparse(value)
+        if parsed.scheme.lower() != "file":
+            return value
+
+        netloc = unquote(parsed.netloc)
+        path = unquote(parsed.path)
+        if netloc and path:
+            path = f"//{netloc}{path}"
+        elif netloc:
+            path = netloc
+
+        # AstrBot/平台可能传入 file:///E:\path 或 file:///E:/path。
+        if len(path) >= 3 and path[0] == "/" and path[2] == ":":
+            path = path[1:]
+        return os.path.normpath(path)
 
     async def download_image(self, url: str) -> tuple[bytes, str] | None:
         """下载或读取图片并返回二进制数据和 MIME 类型。"""

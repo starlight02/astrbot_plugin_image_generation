@@ -31,7 +31,12 @@ from .constants import (
 )
 from .generator import ImageGenerator
 from .image_processor import ImageProcessor
-from .llm_tool import ImageGenerationTool, adjust_tool_parameters
+from .llm_tool import (
+    ImageGenerationTool,
+    PresetEditTool,
+    PresetQueryTool,
+    adjust_tool_parameters,
+)
 from .safety_auditor import SafetyAuditor
 from .task_manager import TaskManager
 from .types import (
@@ -71,6 +76,8 @@ __all__ = [
     "SafetyAuditSettings",
     # LLM 工具
     "ImageGenerationTool",
+    "PresetQueryTool",
+    "PresetEditTool",
     "adjust_tool_parameters",
     "SafetyAuditor",
     # 数据类型

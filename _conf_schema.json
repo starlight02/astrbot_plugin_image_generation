@@ -1,9 +1,18 @@
 {
   "enable_llm_tool": {
     "description": "启用 LLM 工具",
-    "hint": "启用后,LLM 可以在对话中自动调用图像生成功能",
-    "type": "bool",
-    "default": true
+    "hint": "选择允许 LLM 在对话中调用的工具。生图工具用于普通生图、预设生图、自拍/人设生图和图生图；预设查询工具用于查看预设/人设列表和详情；预设编辑工具用于创建、删除预设。",
+    "type": "list",
+    "options": [
+      "生图工具",
+      "预设查询工具",
+      "预设编辑工具"
+    ],
+    "default": [
+      "生图工具",
+      "预设查询工具",
+      "预设编辑工具"
+    ]
   },
   "api_providers": {
     "type": "template_list",
