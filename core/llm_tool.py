@@ -249,7 +249,7 @@ async def _download_reference_images(
     plugin: Any,
     references: Any,
     *,
-    log_prefix: str,
+    reference_label: str,
     task_id: str | None = None,
 ) -> list[tuple[bytes, str]]:
     """Download explicit reference images from URLs or local file paths."""
@@ -260,7 +260,7 @@ async def _download_reference_images(
             images_data.append(image_data)
         else:
             logger.warning(
-                f"{task_log} {log_prefix}参考图获取失败: {safe_log_url(reference)}"
+                f"{task_log} {reference_label}参考图获取失败: {safe_log_url(reference)}"
             )
     return images_data
 
@@ -300,7 +300,7 @@ async def _collect_reference_images(
         await _download_reference_images(
             plugin,
             reference_images,
-            log_prefix="显式",
+            reference_label="显式",
             task_id=task_id,
         )
     )
