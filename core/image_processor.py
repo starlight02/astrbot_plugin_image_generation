@@ -199,8 +199,9 @@ class ImageProcessor:
                                 if url and (data := await self.download_image(url)):
                                     images_data.append(data)
                 elif isinstance(component, Comp.At):
-                    # 处理 @ 用户的头像
-                    if hasattr(component, "qq") and component.qq != "all":
+                    # 处理 @ 用户的头像，跳过机器人自身
+                    bot_self_id = str(event.get_self_id()) if hasattr(event, "get_self_id") else ""
+                    if hasattr(component, "qq") and component.qq != "all" and str(component.qq) != bot_self_id:
                         uid = str(component.qq)
                         if uid in avatar_user_ids:
                             continue
