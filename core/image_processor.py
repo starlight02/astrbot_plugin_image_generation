@@ -170,6 +170,47 @@ class ImageProcessor:
             logger.debug(f"{LOG} 获取头像失败 (user_id={mask_sensitive(user_id)}): {e}")
         return None
 
+    def _message_body_leading_component(self, event: AstrMessageEvent):
+        """Return the first non-reply, non-empty message component."""
+        if not event.message_obj or not event.message_obj.message:
+            return None
+
+        for component in event.message_obj.message:
+            if isinstance(component, Comp.Reply):
+                continue
+            if isinstance(component, Comp.Plain) and not component.text.strip():
+                continue
+            return component
+        return None
+
+    def _has_reply_from_bot(self, event: AstrMessageEvent, bot_self_id: str) -> bool:
+        """Return whether the current event replies to a bot-sent message."""
+        if not bot_self_id or not event.message_obj or not event.message_obj.message:
+            return False
+
+        for component in event.message_obj.message:
+            if not isinstance(component, Comp.Reply):
+                continue
+            for value in (component.sender_id, component.qq):
+                if value is not None and str(value).strip() == bot_self_id:
+                    return True
+        return False
+
+    def _should_skip_leading_bot_at(
+        self,
+        event: AstrMessageEvent,
+        bot_self_id: str,
+    ) -> bool:
+        """Return whether the leading bot mention is only the command trigger."""
+        if not bot_self_id or self._has_reply_from_bot(event, bot_self_id):
+            return False
+
+        leading_component = self._message_body_leading_component(event)
+        if not isinstance(leading_component, Comp.At):
+            return False
+
+        return str(leading_component.qq).strip() == bot_self_id
+
     async def fetch_images_from_event(
         self,
         event: AstrMessageEvent,
@@ -184,7 +225,11 @@ class ImageProcessor:
             return images_data
 
         bot_self_id = str(event.get_self_id()) if hasattr(event, "get_self_id") else ""
-        first_at_bot_skipped = False
+        should_skip_leading_bot_at = self._should_skip_leading_bot_at(
+            event,
+            bot_self_id,
+        )
+        leading_bot_at_skipped = False
 
         for component in event.message_obj.message:
             try:
@@ -203,12 +248,15 @@ class ImageProcessor:
                                     images_data.append(data)
                 elif isinstance(component, Comp.At):
                     # 处理 @ 用户的头像
-                    # 跳过消息中第一个 @机器人
                     if hasattr(component, "qq") and component.qq != "all":
-                        if str(component.qq) == bot_self_id and not first_at_bot_skipped:
-                            first_at_bot_skipped = True
+                        uid = str(component.qq).strip()
+                        if (
+                            should_skip_leading_bot_at
+                            and not leading_bot_at_skipped
+                            and uid == bot_self_id
+                        ):
+                            leading_bot_at_skipped = True
                             continue
-                        uid = str(component.qq)
                         if uid in avatar_user_ids:
                             continue
                         avatar_user_ids.add(uid)
