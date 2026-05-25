@@ -19,6 +19,7 @@ class SafetyAuditor:
     """Audits prompts and generated images."""
 
     PROMPT_PLACEHOLDER = "{prompt}"
+    AUDIT_RESULT_TAGS = ("audit_result", "result", "output", "json")
 
     def __init__(self, context: Context, config_manager: ConfigManager):
         self._context = context
@@ -99,13 +100,22 @@ class SafetyAuditor:
             )
 
         if self.PROMPT_PLACEHOLDER in review_prompt:
-            return review_prompt.replace(self.PROMPT_PLACEHOLDER, prompt)
+            return review_prompt.replace(
+                self.PROMPT_PLACEHOLDER,
+                self._format_prompt_placeholder(review_prompt, prompt),
+            )
 
         if not append_prompt_if_missing_placeholder or not prompt:
             return review_prompt
 
         # 兼容旧的提示词审核配置：即使没有占位符，也会附加当前提示词给审核模型。
         return f"{review_prompt}\n\n用户提示词：\n{prompt}"
+
+    def _format_prompt_placeholder(self, template: str, prompt: str) -> str:
+        """Format user prompt for insertion into a review prompt template."""
+        if "<![CDATA[" in template:
+            return prompt.replace("]]>", "]]]]><![CDATA[>")
+        return prompt
 
     async def _audit_with_model(
         self,
@@ -158,8 +168,10 @@ class SafetyAuditor:
 
         payload = self._extract_json(text)
         if payload is not None:
-            allow = self._to_bool(payload.get("allow"))
-            reason = str(payload.get("reason") or "").strip()
+            allow = self._to_bool(self._first_present(payload, "allow", "allowed"))
+            reason = str(
+                self._first_present(payload, "reason", "message", "detail") or ""
+            ).strip()
             if allow is not None:
                 return allow, reason or ("审核通过" if allow else "审核未通过")
 
@@ -175,23 +187,90 @@ class SafetyAuditor:
         return False, f"安全审核异常：无法判定审核结果，原始返回: {text[:120]}"
 
     def _extract_json(self, text: str) -> dict[str, object] | None:
-        text = text.strip()
-        try:
-            obj = json.loads(text)
+        for candidate in self._json_candidates(text):
+            try:
+                obj = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
             if isinstance(obj, dict):
                 return obj
-        except json.JSONDecodeError:
-            pass
+        return None
 
-        match = re.search(r"\{[\s\S]*\}", text)
-        if not match:
-            return None
-        try:
-            obj = json.loads(match.group(0))
-            if isinstance(obj, dict):
-                return obj
-        except json.JSONDecodeError:
-            return None
+    def _json_candidates(self, text: str) -> list[str]:
+        """Return likely JSON objects from model output."""
+        text = text.strip()
+        if not text:
+            return []
+
+        candidates = [text]
+        candidates.extend(self._extract_fenced_blocks(text))
+        candidates.extend(self._extract_tagged_blocks(text))
+        candidates.extend(self._extract_balanced_json_objects(text))
+
+        unique_candidates: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            normalized = candidate.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            unique_candidates.append(normalized)
+        return unique_candidates
+
+    def _extract_fenced_blocks(self, text: str) -> list[str]:
+        pattern = r"```(?:json|JSON)?\s*([\s\S]*?)\s*```"
+        return [match.group(1).strip() for match in re.finditer(pattern, text)]
+
+    def _extract_tagged_blocks(self, text: str) -> list[str]:
+        candidates: list[str] = []
+        for tag in self.AUDIT_RESULT_TAGS:
+            pattern = rf"<{tag}\b[^>]*>\s*([\s\S]*?)\s*</{tag}>"
+            candidates.extend(
+                match.group(1).strip()
+                for match in re.finditer(pattern, text, flags=re.IGNORECASE)
+            )
+        return candidates
+
+    def _extract_balanced_json_objects(self, text: str) -> list[str]:
+        candidates: list[str] = []
+        in_string = False
+        escape = False
+        depth = 0
+        start = -1
+
+        for index, char in enumerate(text):
+            if in_string:
+                if escape:
+                    escape = False
+                elif char == "\\":
+                    escape = True
+                elif char == '"':
+                    in_string = False
+                continue
+
+            if char == '"':
+                in_string = True
+                continue
+
+            if char == "{":
+                if depth == 0:
+                    start = index
+                depth += 1
+                continue
+
+            if char != "}" or depth == 0:
+                continue
+
+            depth -= 1
+            if depth == 0 and start >= 0:
+                candidates.append(text[start : index + 1])
+                start = -1
+        return candidates
+
+    def _first_present(self, payload: dict[str, object], *keys: str) -> object:
+        for key in keys:
+            if key in payload:
+                return payload[key]
         return None
 
     def _to_bool(self, value: object) -> bool | None:
