@@ -8,10 +8,15 @@ from typing import Any
 
 from .config_defaults import (
     ALL_LLM_TOOLS,
+    ALL_RESULT_INFO_ITEMS,
     DEFAULT_IMAGE_AUDIT_PROMPT,
     DEFAULT_PROMPT_AUDIT_PROMPT,
+    DEFAULT_RESULT_INFO_ITEMS,
     LEGACY_IMAGE_AUDIT_PROMPTS,
     LEGACY_PROMPT_AUDIT_PROMPTS,
+    RESULT_INFO_COUNT,
+    RESULT_INFO_DURATION,
+    RESULT_INFO_MODEL,
 )
 from .constants import LEGACY_AUTO_OPTION, UNSPECIFIED_OPTION
 
@@ -66,6 +71,7 @@ class ConfigMigrator:
         changed |= self._migrate_enable_llm_tool(config, messages)
         changed |= self._move_legacy_prompt_templates(config, messages)
         changed |= self._migrate_legacy_safety_audit_prompts(config, messages)
+        changed |= self._migrate_generation_result_info_items(config, messages)
 
         if not self._schema:
             return changed, messages
@@ -149,6 +155,36 @@ class ConfigMigrator:
             )
             changed = True
         return changed
+
+    def _migrate_generation_result_info_items(
+        self, config: dict[str, Any], messages: list[str]
+    ) -> bool:
+        """Convert legacy result-info switches to the selectable item list."""
+        generation_cfg = config.get("generation")
+        if not isinstance(generation_cfg, dict):
+            return False
+
+        if "result_info_items" in generation_cfg:
+            return False
+
+        has_generation_info = "show_generation_info" in generation_cfg
+        has_model_info = "show_model_info" in generation_cfg
+        if not has_generation_info and not has_model_info:
+            return False
+
+        selected = set(DEFAULT_RESULT_INFO_ITEMS)
+        if self._coerce_bool(generation_cfg.get("show_generation_info"), False):
+            selected.update((RESULT_INFO_DURATION, RESULT_INFO_COUNT))
+        if self._coerce_bool(generation_cfg.get("show_model_info"), False):
+            selected.add(RESULT_INFO_MODEL)
+
+        generation_cfg["result_info_items"] = [
+            item for item in ALL_RESULT_INFO_ITEMS if item in selected
+        ]
+        messages.append(
+            "generation.show_generation_info/show_model_info -> generation.result_info_items"
+        )
+        return True
 
     def _normalize_object(
         self,

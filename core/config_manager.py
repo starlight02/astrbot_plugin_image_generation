@@ -22,11 +22,17 @@ from .constants import (
 )
 from .config_defaults import (
     ALL_LLM_TOOLS,
+    ALL_RESULT_INFO_ITEMS,
     DEFAULT_IMAGE_AUDIT_PROMPT,
     DEFAULT_PROMPT_AUDIT_PROMPT,
+    DEFAULT_RESULT_INFO_ITEMS,
     LLM_TOOL_IMAGE_GENERATION,
     LLM_TOOL_PRESET_EDIT,
     LLM_TOOL_PRESET_QUERY,
+    RESULT_INFO_COUNT,
+    RESULT_INFO_DURATION,
+    RESULT_INFO_MODEL,
+    RESULT_INFO_USAGE,
 )
 from .config_migrator import ConfigMigrator
 from .logging_utils import log_prefix, safe_log_text
@@ -43,6 +49,10 @@ __all__ = (
     "PersonaTemplate",
     "PluginConfig",
     "PromptAuditSettings",
+    "RESULT_INFO_COUNT",
+    "RESULT_INFO_DURATION",
+    "RESULT_INFO_MODEL",
+    "RESULT_INFO_USAGE",
     "SafetyAuditSettings",
     "UsageSettings",
 )
@@ -89,8 +99,9 @@ class GenerationSettings:
     default_aspect_ratio: str = DEFAULT_ASPECT_RATIO
     default_resolution: str = DEFAULT_RESOLUTION
     max_concurrent_tasks: int = DEFAULT_MAX_CONCURRENT_TASKS
-    show_generation_info: bool = False
-    show_model_info: bool = False
+    result_info_items: set[str] = field(
+        default_factory=lambda: set(DEFAULT_RESULT_INFO_ITEMS)
+    )
     start_task_message_template: str = (
         "已开始生图任务{reference_images_block}{preset_block}"
     )
@@ -243,14 +254,28 @@ class ConfigManager:
                 DEFAULT_MAX_CONCURRENT_TASKS,
                 min_value=1,
             ),
-            show_generation_info=self._get_bool(cfg, "show_generation_info", False),
-            show_model_info=self._get_bool(cfg, "show_model_info", False),
+            result_info_items=self._parse_result_info_items(cfg),
             start_task_message_template=self._get_str(
                 cfg,
                 "start_task_message_template",
                 GenerationSettings.start_task_message_template,
             ),
         )
+
+    def _parse_result_info_items(self, cfg: dict[str, Any]) -> set[str]:
+        """Parse selected result information items."""
+        raw = cfg.get("result_info_items")
+        if isinstance(raw, list):
+            selected = self._parse_string_list(raw)
+        else:
+            selected = list(DEFAULT_RESULT_INFO_ITEMS)
+            if self._get_bool(cfg, "show_generation_info", False):
+                selected.extend((RESULT_INFO_DURATION, RESULT_INFO_COUNT))
+            if self._get_bool(cfg, "show_model_info", False):
+                selected.append(RESULT_INFO_MODEL)
+
+        valid_items = set(ALL_RESULT_INFO_ITEMS)
+        return {item for item in selected if item in valid_items}
 
     def _parse_safety_audit_settings(self, cfg: dict[str, Any]) -> SafetyAuditSettings:
         """Parse prompt and image audit settings."""
@@ -727,14 +752,25 @@ class ConfigManager:
         return self._plugin_config.generation_settings.max_concurrent_tasks
 
     @property
+    def result_info_items(self) -> set[str]:
+        """生图成功后要展示的结果信息项。"""
+        return self._plugin_config.generation_settings.result_info_items
+
+    def should_show_result_info(self, item: str) -> bool:
+        """检查指定结果信息项是否启用。"""
+        return item in self.result_info_items
+
+    @property
     def show_generation_info(self) -> bool:
         """是否显示生成信息。"""
-        return self._plugin_config.generation_settings.show_generation_info
+        return self.should_show_result_info(
+            RESULT_INFO_DURATION
+        ) or self.should_show_result_info(RESULT_INFO_COUNT)
 
     @property
     def show_model_info(self) -> bool:
         """是否显示模型信息。"""
-        return self._plugin_config.generation_settings.show_model_info
+        return self.should_show_result_info(RESULT_INFO_MODEL)
 
     @property
     def start_task_message_template(self) -> str:

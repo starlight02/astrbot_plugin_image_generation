@@ -858,17 +858,19 @@
           "4K"
         ]
       },
-      "show_generation_info": {
-        "description": "显示生图信息",
-        "hint": "生图成功后展示耗时和生成图片数量。",
-        "type": "bool",
-        "default": false
-      },
-      "show_model_info": {
-        "description": "显示模型信息",
-        "hint": "生图成功后展示使用的模型名称。",
-        "type": "bool",
-        "default": false
+      "result_info_items": {
+        "description": "显示结果信息",
+        "hint": "生图成功后附加展示的信息；“用量”仅在开启每日额度时显示。",
+        "type": "list",
+        "options": [
+          "耗时",
+          "模型",
+          "生成数量",
+          "用量"
+        ],
+        "default": [
+          "用量"
+        ]
       },
       "start_task_message_template": {
         "description": "开始生图任务提示模板",

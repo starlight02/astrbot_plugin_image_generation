@@ -25,6 +25,10 @@ from .core.config_manager import (
     LLM_TOOL_PRESET_EDIT,
     LLM_TOOL_PRESET_QUERY,
     ConfigManager,
+    RESULT_INFO_COUNT,
+    RESULT_INFO_DURATION,
+    RESULT_INFO_MODEL,
+    RESULT_INFO_USAGE,
 )
 from .core.generator import ImageGenerator
 from .core.image_processor import ImageProcessor
@@ -436,17 +440,24 @@ class ImageGenerationPlugin(Star):
             chain.file_image(file_path)
 
         info_parts = []
-        if self.config_manager.show_generation_info:
-            info_parts.append(
-                f"✨ 生成成功！\n📊 耗时: {duration:.2f}s\n🖼️ 数量: {len(generated_file_paths)}张"
-            )
+        if self.config_manager.should_show_result_info(RESULT_INFO_DURATION):
+            info_parts.append(f"📊 耗时: {duration:.2f}s")
 
-        if self.config_manager.show_model_info and self.config_manager.adapter_config:
+        if (
+            self.config_manager.should_show_result_info(RESULT_INFO_MODEL)
+            and self.config_manager.adapter_config
+        ):
             info_parts.append(
                 f"🤖 模型: {self.config_manager.adapter_config.name}/{self.config_manager.adapter_config.model}"
             )
 
-        if self.usage_manager.is_daily_limit_enabled():
+        if self.config_manager.should_show_result_info(RESULT_INFO_COUNT):
+            info_parts.append(f"🖼️ 数量: {len(generated_file_paths)}张")
+
+        if (
+            self.config_manager.should_show_result_info(RESULT_INFO_USAGE)
+            and self.usage_manager.is_daily_limit_enabled()
+        ):
             count = self.usage_manager.get_usage_count(unified_msg_origin)
             daily_limit = (
                 "∞"
