@@ -264,16 +264,9 @@ class ConfigManager:
 
     def _parse_result_info_items(self, cfg: dict[str, Any]) -> set[str]:
         """Parse selected result information items."""
-        raw = cfg.get("result_info_items")
-        if isinstance(raw, list):
-            selected = self._parse_string_list(raw)
-        else:
-            selected = list(DEFAULT_RESULT_INFO_ITEMS)
-            if self._get_bool(cfg, "show_generation_info", False):
-                selected.extend((RESULT_INFO_DURATION, RESULT_INFO_COUNT))
-            if self._get_bool(cfg, "show_model_info", False):
-                selected.append(RESULT_INFO_MODEL)
-
+        selected = self._parse_string_list(
+            cfg.get("result_info_items", list(DEFAULT_RESULT_INFO_ITEMS))
+        )
         valid_items = set(ALL_RESULT_INFO_ITEMS)
         return {item for item in selected if item in valid_items}
 
@@ -759,18 +752,6 @@ class ConfigManager:
     def should_show_result_info(self, item: str) -> bool:
         """检查指定结果信息项是否启用。"""
         return item in self.result_info_items
-
-    @property
-    def show_generation_info(self) -> bool:
-        """是否显示生成信息。"""
-        return self.should_show_result_info(
-            RESULT_INFO_DURATION
-        ) or self.should_show_result_info(RESULT_INFO_COUNT)
-
-    @property
-    def show_model_info(self) -> bool:
-        """是否显示模型信息。"""
-        return self.should_show_result_info(RESULT_INFO_MODEL)
 
     @property
     def start_task_message_template(self) -> str:

@@ -8,15 +8,10 @@ from typing import Any
 
 from .config_defaults import (
     ALL_LLM_TOOLS,
-    ALL_RESULT_INFO_ITEMS,
     DEFAULT_IMAGE_AUDIT_PROMPT,
     DEFAULT_PROMPT_AUDIT_PROMPT,
-    DEFAULT_RESULT_INFO_ITEMS,
     LEGACY_IMAGE_AUDIT_PROMPTS,
     LEGACY_PROMPT_AUDIT_PROMPTS,
-    RESULT_INFO_COUNT,
-    RESULT_INFO_DURATION,
-    RESULT_INFO_MODEL,
 )
 from .constants import LEGACY_AUTO_OPTION, UNSPECIFIED_OPTION
 
@@ -37,16 +32,7 @@ class ConfigMigrator:
     """Migrate legacy config, then normalize it using schema metadata."""
 
     TEMPLATE_KEY_FIELD = "__template_key"
-    LEGACY_TEMPLATE_KEY_FIELD = "template"
     TEMPLATE_KEY_ALIASES: dict[str, str] = {"z_image_gitee": "gitee_ai"}
-    FIELD_ALIASES: dict[str, dict[str, str]] = {
-        "prompt_templates.personas[]": {
-            "name": "persona_name",
-            "prompt": "persona_prompt",
-            "image": "persona_image",
-            "reference_image": "persona_image",
-        },
-    }
     VALUE_ALIASES: dict[str, dict[Any, Any]] = {
         "generation.default_aspect_ratio": {LEGACY_AUTO_OPTION: UNSPECIFIED_OPTION},
         "generation.default_resolution": {LEGACY_AUTO_OPTION: UNSPECIFIED_OPTION},
@@ -54,7 +40,6 @@ class ConfigMigrator:
     LIST_ADDITIONS_ON_TEMPLATE_MIGRATION: dict[str, dict[str, list[Any]]] = {
         "z_image_gitee": {"capability_options": ["图生图"]},
     }
-    _SENTINEL = object()
 
     def __init__(self, schema: Mapping[str, Any] | None):
         self._schema = schema if isinstance(schema, Mapping) else {}
@@ -69,9 +54,7 @@ class ConfigMigrator:
         messages: list[str] = []
 
         changed |= self._migrate_enable_llm_tool(config, messages)
-        changed |= self._move_legacy_prompt_templates(config, messages)
         changed |= self._migrate_legacy_safety_audit_prompts(config, messages)
-        changed |= self._migrate_generation_result_info_items(config, messages)
 
         if not self._schema:
             return changed, messages
@@ -97,29 +80,6 @@ class ConfigMigrator:
 
         config["enable_llm_tool"] = list(ALL_LLM_TOOLS) if value else []
         messages.append("enable_llm_tool: bool -> list")
-        return True
-
-    def _move_legacy_prompt_templates(
-        self, config: dict[str, Any], messages: list[str]
-    ) -> bool:
-        legacy_presets = self._pop_if_present(config, "presets")
-        legacy_personas = self._pop_if_present(config, "personas")
-        if legacy_presets is self._SENTINEL and legacy_personas is self._SENTINEL:
-            return False
-
-        prompt_templates = config.setdefault("prompt_templates", {})
-        if not isinstance(prompt_templates, dict):
-            prompt_templates = {}
-            config["prompt_templates"] = prompt_templates
-
-        if legacy_presets is not self._SENTINEL and "presets" not in prompt_templates:
-            prompt_templates["presets"] = legacy_presets
-            messages.append("presets -> prompt_templates.presets")
-
-        if legacy_personas is not self._SENTINEL and "personas" not in prompt_templates:
-            prompt_templates["personas"] = legacy_personas
-            messages.append("personas -> prompt_templates.personas")
-
         return True
 
     def _migrate_legacy_safety_audit_prompts(
@@ -156,36 +116,6 @@ class ConfigMigrator:
             changed = True
         return changed
 
-    def _migrate_generation_result_info_items(
-        self, config: dict[str, Any], messages: list[str]
-    ) -> bool:
-        """Convert legacy result-info switches to the selectable item list."""
-        generation_cfg = config.get("generation")
-        if not isinstance(generation_cfg, dict):
-            return False
-
-        if "result_info_items" in generation_cfg:
-            return False
-
-        has_generation_info = "show_generation_info" in generation_cfg
-        has_model_info = "show_model_info" in generation_cfg
-        if not has_generation_info and not has_model_info:
-            return False
-
-        selected = set(DEFAULT_RESULT_INFO_ITEMS)
-        if self._coerce_bool(generation_cfg.get("show_generation_info"), False):
-            selected.update((RESULT_INFO_DURATION, RESULT_INFO_COUNT))
-        if self._coerce_bool(generation_cfg.get("show_model_info"), False):
-            selected.add(RESULT_INFO_MODEL)
-
-        generation_cfg["result_info_items"] = [
-            item for item in ALL_RESULT_INFO_ITEMS if item in selected
-        ]
-        messages.append(
-            "generation.show_generation_info/show_model_info -> generation.result_info_items"
-        )
-        return True
-
     def _normalize_object(
         self,
         raw: Any,
@@ -197,11 +127,7 @@ class ConfigMigrator:
         changed = False
 
         if isinstance(raw, Mapping):
-            raw_mapping, alias_changed, alias_messages = self._apply_field_aliases(
-                raw, path=path
-            )
-            changed |= alias_changed
-            messages.extend(alias_messages)
+            raw_mapping = dict(raw)
         else:
             raw_mapping = {}
             changed = True
@@ -318,11 +244,7 @@ class ConfigMigrator:
             child_raw = {
                 key: value
                 for key, value in item.items()
-                if key
-                not in {
-                    self.TEMPLATE_KEY_FIELD,
-                    self.LEGACY_TEMPLATE_KEY_FIELD,
-                }
+                if key != self.TEMPLATE_KEY_FIELD
             }
             changed |= self._ensure_list_values(
                 child_raw,
@@ -360,18 +282,6 @@ class ConfigMigrator:
         changed = False
 
         raw_key = item.get(self.TEMPLATE_KEY_FIELD)
-        legacy_key = item.get(self.LEGACY_TEMPLATE_KEY_FIELD)
-        if legacy_key not in (None, ""):
-            changed = True
-            messages.append(
-                f"{item_path}.{self.LEGACY_TEMPLATE_KEY_FIELD}: removed legacy key"
-            )
-            if raw_key in (None, ""):
-                raw_key = legacy_key
-                messages.append(
-                    f"{item_path}.{self.LEGACY_TEMPLATE_KEY_FIELD} -> {self.TEMPLATE_KEY_FIELD}"
-                )
-
         old_template_key = str(raw_key).strip() if raw_key not in (None, "") else ""
         template_key = self.normalize_template_key(old_template_key)
         if template_key != old_template_key:
@@ -391,34 +301,6 @@ class ConfigMigrator:
             changed = True
 
         return template_key, old_template_key, changed, messages
-
-    def _apply_field_aliases(
-        self,
-        raw: Mapping[str, Any],
-        *,
-        path: str,
-    ) -> tuple[dict[str, Any], bool, list[str]]:
-        aliases = self._field_aliases_for_path(path)
-        if not aliases:
-            return dict(raw), False, []
-
-        changed = False
-        messages: list[str] = []
-        normalized = dict(raw)
-        for legacy_key, current_key in aliases.items():
-            if legacy_key not in normalized:
-                continue
-            if current_key not in normalized:
-                normalized[current_key] = normalized[legacy_key]
-                messages.append(f"{path}.{legacy_key} -> {current_key}")
-            normalized.pop(legacy_key, None)
-            changed = True
-        return normalized, changed, messages
-
-    def _field_aliases_for_path(self, path: str) -> dict[str, str]:
-        if path.startswith("prompt_templates.personas["):
-            return self.FIELD_ALIASES["prompt_templates.personas[]"]
-        return {}
 
     def _ensure_list_values(
         self,
@@ -557,8 +439,3 @@ class ConfigMigrator:
 
     def _join_path(self, base: str, key: str) -> str:
         return f"{base}.{key}" if base else key
-
-    def _pop_if_present(self, target: dict[str, Any], key: str) -> Any:
-        if key not in target:
-            return self._SENTINEL
-        return target.pop(key)
