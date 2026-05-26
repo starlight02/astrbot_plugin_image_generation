@@ -523,9 +523,6 @@ class ImageGenerationPlugin(Star):
         duration = end_time - start_time
 
         if result.error:
-            logger.error(
-                f"{task_log} 生成失败，耗时: {duration:.2f}s, 错误: {safe_log_text(result.error, 200)}"
-            )
             self.task_manager.mark_generation_task_failed(task_id, result.error)
             await self.context.send_message(
                 unified_msg_origin,
@@ -538,7 +535,6 @@ class ImageGenerationPlugin(Star):
         )
 
         if not result.images:
-            logger.warning(f"{task_log} 模型未返回图片")
             self.task_manager.mark_generation_task_failed(task_id, "模型未返回图片")
             return
 
@@ -549,7 +545,6 @@ class ImageGenerationPlugin(Star):
                 generated_file_paths.append(file_path)
 
         if not generated_file_paths:
-            logger.warning(f"{task_log} 未能保存任何生成图片")
             self.task_manager.mark_generation_task_failed(
                 task_id, "未能保存任何生成图片"
             )
@@ -562,9 +557,6 @@ class ImageGenerationPlugin(Star):
             unified_msg_origin=unified_msg_origin,
         )
         if not image_allowed:
-            logger.warning(
-                f"{task_log} 图片审核未通过: {safe_log_text(image_reason, 200)}"
-            )
             self.task_manager.mark_generation_task_failed(
                 task_id,
                 f"图片内容审核未通过: {image_reason}",
@@ -586,9 +578,6 @@ class ImageGenerationPlugin(Star):
         self.usage_manager.record_usage(
             unified_msg_origin,
             is_admin=is_usage_limit_admin,
-        )
-        logger.debug(
-            f"{task_log} 已记录用量并准备发送结果: 文件={len(generated_file_paths)}个"
         )
 
         chain = MessageChain()
@@ -632,7 +621,6 @@ class ImageGenerationPlugin(Star):
             chain.message("\n" + "\n".join(info_parts))
 
         await self.context.send_message(unified_msg_origin, chain)
-        logger.debug(f"{task_log} 结果消息已发送")
 
     # ---------------------- 指令处理 ----------------------
 
@@ -750,7 +738,6 @@ class ImageGenerationPlugin(Star):
                     extra_content = rest
 
         if matched_preset:
-            logger.debug(f"{LOG} 命中预设: {safe_log_text(matched_preset)}")
             preset_content = self.config_manager.presets[matched_preset]
             try:
                 # 预设支持 JSON 格式配置高级参数
@@ -773,7 +760,6 @@ class ImageGenerationPlugin(Star):
                 prompt = f"{prompt} {extra_content}"
 
         if matched_persona:
-            logger.debug(f"{LOG} 命中人设: {safe_log_text(matched_persona)}")
             persona = self.config_manager.personas[matched_persona]
             prompt = persona.prompt
             persona_image = persona.image
@@ -891,8 +877,8 @@ class ImageGenerationPlugin(Star):
         user_id = event.unified_msg_origin
         masked_uid = mask_sensitive(user_id)
         message_str = (event.message_str or "").strip()
-        logger.info(
-            f"{LOG} 收到预设指令 - 用户: {masked_uid}, 内容摘要: {safe_log_text(message_str)}"
+        logger.debug(
+            f"{LOG} 收到预设指令: 用户={masked_uid}，输入={safe_log_text(message_str)}"
         )
 
         parts = message_str.split(maxsplit=1)
