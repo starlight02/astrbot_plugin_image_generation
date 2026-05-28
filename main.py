@@ -709,77 +709,15 @@ class ImageGenerationPlugin(Star):
             f"分辨率={safe_log_text(resolution or UNSPECIFIED_OPTION)}"
         )
 
-        generated_file_paths: list[str] = []
-        errors: list[str] = []
-        while len(generated_file_paths) < image_count:
-            current_index = len(generated_file_paths) + 1
-            self.task_manager.update_generation_task_progress(
-                task_id,
-                current_index=current_index,
-                result_count=len(generated_file_paths),
-                message=f"正在生成第 {current_index}/{image_count} 张",
-            )
-
-            result = await self._generate_one_image_request(
-                GenerationRequest(
-                    prompt=prompt,
-                    images=images,
-                    aspect_ratio=aspect_ratio,
-                    resolution=resolution,
-                    task_id=task_id,
-                    batch_index=current_index,
-                    batch_count=image_count,
-                    retry_status_callback=lambda retry_attempt,
-                    max_retry_attempts,
-                    current_index=current_index: self.task_manager.update_generation_task_retry_status(
-                        task_id,
-                        current_index=current_index,
-                        retry_attempt=retry_attempt,
-                        max_retry_attempts=max_retry_attempts,
-                    ),
-                )
-            )
-
-            if result.error:
-                error_message = f"第 {current_index} 张生成失败: {result.error}"
-                errors.append(error_message)
-                logger.warning(f"{task_log} {safe_log_text(error_message, 200)}")
-                break
-
-            if not result.images:
-                error_message = f"第 {current_index} 张生成失败: 模型未返回图片"
-                errors.append(error_message)
-                logger.warning(f"{task_log} {error_message}")
-                break
-
-            remaining_count = image_count - len(generated_file_paths)
-            selected_images = result.images[:remaining_count]
-            if len(result.images) > remaining_count:
-                logger.debug(
-                    f"{task_log} 适配器返回图片超过请求数量，已忽略 {len(result.images) - remaining_count} 张"
-                )
-
-            for img_bytes in selected_images:
-                file_path = self.image_processor.save_generated_image(
-                    task_id, img_bytes
-                )
-                if file_path:
-                    generated_file_paths.append(file_path)
-                else:
-                    error_message = f"第 {current_index} 张生成失败: 未能保存图片"
-                    errors.append(error_message)
-                    logger.warning(f"{task_log} {error_message}")
-                    break
-
-            if errors:
-                break
-
-            self.task_manager.update_generation_task_progress(
-                task_id,
-                current_index=min(len(generated_file_paths) + 1, image_count),
-                result_count=len(generated_file_paths),
-                message=f"已生成 {len(generated_file_paths)}/{image_count} 张",
-            )
+        generated_file_paths, errors = await self._generate_image_requests_concurrently(
+            task_id=task_id,
+            task_log=task_log,
+            prompt=prompt,
+            images=images,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            image_count=image_count,
+        )
 
         end_time = time.time()
         duration = end_time - start_time
@@ -880,6 +818,141 @@ class ImageGenerationPlugin(Star):
             chain.message("\n" + "\n".join(info_parts))
 
         await self.context.send_message(unified_msg_origin, chain)
+
+    async def _generate_image_requests_concurrently(
+        self,
+        *,
+        task_id: str,
+        task_log: str,
+        prompt: str,
+        images: list[ImageData],
+        aspect_ratio: str | None,
+        resolution: str | None,
+        image_count: int,
+    ) -> tuple[list[str], list[str]]:
+        """Generate all requested images concurrently under request-level limits."""
+        generated_file_paths: list[str] = []
+        errors: list[str] = []
+        pending_tasks: dict[asyncio.Task, int] = {}
+        next_index = 1
+        max_pending_requests = min(
+            image_count,
+            max(1, self.config_manager.max_concurrent_tasks),
+        )
+
+        async def schedule_next_request() -> None:
+            nonlocal next_index
+            if next_index > image_count:
+                return
+            current_index = next_index
+            next_index += 1
+            self.task_manager.update_generation_task_progress(
+                task_id,
+                current_index=current_index,
+                result_count=len(generated_file_paths),
+                message=(
+                    f"正在生成第 {current_index}/{image_count} 张，"
+                    f"已完成 {len(generated_file_paths)}/{image_count} 张"
+                ),
+            )
+            task = asyncio.create_task(
+                self._generate_one_image_request(
+                    GenerationRequest(
+                        prompt=prompt,
+                        images=images,
+                        aspect_ratio=aspect_ratio,
+                        resolution=resolution,
+                        task_id=task_id,
+                        batch_index=current_index,
+                        batch_count=image_count,
+                        retry_status_callback=lambda retry_attempt,
+                        max_retry_attempts,
+                        current_index=current_index: self.task_manager.update_generation_task_retry_status(
+                            task_id,
+                            current_index=current_index,
+                            retry_attempt=retry_attempt,
+                            max_retry_attempts=max_retry_attempts,
+                        ),
+                    )
+                ),
+                name=f"image_generation_request:{task_id}:{current_index}",
+            )
+            pending_tasks[task] = current_index
+
+        while len(pending_tasks) < max_pending_requests:
+            await schedule_next_request()
+
+        try:
+            while pending_tasks:
+                done_tasks, _ = await asyncio.wait(
+                    pending_tasks,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                for done_task in done_tasks:
+                    current_index = pending_tasks.pop(done_task)
+                    try:
+                        result = done_task.result()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        result = None
+                        error_message = f"第 {current_index} 张生成失败: {exc}"
+                        errors.append(error_message)
+                        logger.warning(
+                            f"{task_log} {safe_log_text(error_message, 200)}"
+                        )
+
+                    if result is None:
+                        continue
+
+                    if result.error:
+                        error_message = f"第 {current_index} 张生成失败: {result.error}"
+                        errors.append(error_message)
+                        logger.warning(
+                            f"{task_log} {safe_log_text(error_message, 200)}"
+                        )
+                    elif not result.images:
+                        error_message = f"第 {current_index} 张生成失败: 模型未返回图片"
+                        errors.append(error_message)
+                        logger.warning(f"{task_log} {error_message}")
+                    else:
+                        selected_images = result.images[:1]
+                        if len(result.images) > 1:
+                            logger.debug(
+                                f"{task_log} 第 {current_index} 张请求返回图片超过 1 张，已忽略 {len(result.images) - 1} 张"
+                            )
+
+                        for img_bytes in selected_images:
+                            file_path = self.image_processor.save_generated_image(
+                                task_id, img_bytes
+                            )
+                            if file_path:
+                                generated_file_paths.append(file_path)
+                            else:
+                                error_message = (
+                                    f"第 {current_index} 张生成失败: 未能保存图片"
+                                )
+                                errors.append(error_message)
+                                logger.warning(f"{task_log} {error_message}")
+                                break
+
+                    self.task_manager.update_generation_task_progress(
+                        task_id,
+                        current_index=min(next_index, image_count),
+                        result_count=len(generated_file_paths),
+                        message=f"已生成 {len(generated_file_paths)}/{image_count} 张",
+                    )
+
+                    if next_index <= image_count:
+                        await schedule_next_request()
+        finally:
+            for pending_task in pending_tasks:
+                pending_task.cancel()
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
+
+        return generated_file_paths, errors
 
     async def _generate_one_image_request(
         self,
