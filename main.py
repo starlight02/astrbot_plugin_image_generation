@@ -856,10 +856,6 @@ class ImageGenerationPlugin(Star):
         if deliver_via_ai:
             return
 
-        chain = MessageChain()
-        for file_path in generated_file_paths:
-            chain.file_image(file_path)
-
         info_parts = []
         if self.config_manager.should_show_result_info(RESULT_INFO_DURATION):
             info_parts.append(f"📊 耗时: {duration:.2f}s")
@@ -894,9 +890,37 @@ class ImageGenerationPlugin(Star):
             info_parts.append(f"📅 今日用量: {count}/{daily_limit}")
 
         if info_parts:
-            chain.message("\n" + "\n".join(info_parts))
+            info_message = "\n".join(info_parts)
+        else:
+            info_message = ""
 
-        await self.context.send_message(unified_msg_origin, chain)
+        await self._send_generated_images(
+            unified_msg_origin,
+            generated_file_paths,
+            info_message=info_message,
+        )
+
+    async def _send_generated_images(
+        self,
+        unified_msg_origin: str,
+        image_paths: list[str],
+        *,
+        info_message: str = "",
+    ) -> None:
+        """按配置将生成图片分批发送，避免单条消息图片过多。"""
+        max_per_message = max(1, self.config_manager.max_images_per_message)
+        total = len(image_paths)
+        for start in range(0, total, max_per_message):
+            batch_paths = image_paths[start : start + max_per_message]
+            chain = MessageChain()
+            for file_path in batch_paths:
+                chain.file_image(file_path)
+
+            is_last_batch = start + max_per_message >= total
+            if is_last_batch and info_message:
+                chain.message("\n" + info_message)
+
+            await self.context.send_message(unified_msg_origin, chain)
 
     async def _generate_image_requests_concurrently(
         self,

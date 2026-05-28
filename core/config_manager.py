@@ -19,6 +19,7 @@ from .constants import (
     DEFAULT_GENERATION_IMAGE_COUNT,
     DEFAULT_IMAGE_AUDIT_PROMPT,
     DEFAULT_MAX_GENERATION_IMAGE_COUNT,
+    DEFAULT_MAX_IMAGES_PER_MESSAGE,
     DEFAULT_MAX_CONCURRENT_TASKS,
     DEFAULT_MAX_IMAGE_SIZE_MB,
     DEFAULT_MAX_RETRY_ATTEMPTS,
@@ -111,6 +112,7 @@ class GenerationSettings:
     default_resolution: str = DEFAULT_RESOLUTION
     default_image_count: int = DEFAULT_GENERATION_IMAGE_COUNT
     max_image_count: int = DEFAULT_MAX_GENERATION_IMAGE_COUNT
+    max_images_per_message: int = DEFAULT_MAX_IMAGES_PER_MESSAGE
     max_concurrent_tasks: int = DEFAULT_MAX_CONCURRENT_TASKS
     result_info_items: set[str] = field(
         default_factory=lambda: set(DEFAULT_RESULT_INFO_ITEMS)
@@ -269,6 +271,12 @@ class ConfigManager:
                 cfg,
                 "max_image_count",
                 DEFAULT_MAX_GENERATION_IMAGE_COUNT,
+                min_value=1,
+            ),
+            max_images_per_message=self._get_int(
+                cfg,
+                "max_images_per_message",
+                DEFAULT_MAX_IMAGES_PER_MESSAGE,
                 min_value=1,
             ),
             max_concurrent_tasks=self._get_int(
@@ -837,6 +845,11 @@ class ConfigManager:
     def max_image_count(self) -> int:
         """单次最大生成图片数量。"""
         return self._plugin_config.generation_settings.max_image_count
+
+    @property
+    def max_images_per_message(self) -> int:
+        """单条消息最多发送的图片数量。"""
+        return self._plugin_config.generation_settings.max_images_per_message
 
     @property
     def max_concurrent_tasks(self) -> int:

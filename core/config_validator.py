@@ -42,6 +42,7 @@ MIN_NUMBER_VALUES: dict[str, int | float] = {
     "generation.max_concurrent_tasks": 1,
     "generation.default_image_count": 1,
     "generation.max_image_count": 1,
+    "generation.max_images_per_message": 1,
     "user_limits.rate_limit_seconds": 0,
     "user_limits.max_image_size_mb": 1,
     "user_limits.daily_limit_count": 1,
