@@ -1045,6 +1045,11 @@ class ImageGenerationPlugin(Star):
         if not cmd_parts:
             return
 
+        if not self.generator or not self.generator.adapter:
+            logger.warning(f"{LOG} 生图指令失败: 生成器未初始化，用户={masked_uid}")
+            yield event.plain_result("❌ 生图生成器未初始化")
+            return
+
         raw_prompt = cmd_parts[1].strip() if len(cmd_parts) > 1 else ""
         image_count, prompt = self._parse_command_image_count(raw_prompt)
 
