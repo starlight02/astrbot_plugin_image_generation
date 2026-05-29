@@ -592,10 +592,14 @@ class ImageGenerationPlugin(Star):
         )
         return "\n".join(lines)
 
-    def resolve_active_task_reference(
-        self, unified_msg_origin: str, task_ref: str
+    def resolve_task_reference(
+        self,
+        unified_msg_origin: str,
+        task_ref: str,
+        *,
+        include_finished: bool = False,
     ) -> GenerationTaskRecord | None:
-        """Resolve a task id or list number into an active task for one session."""
+        """Resolve a task id or active list number into a task for one session."""
         task_ref = task_ref.strip()
         if not task_ref:
             return None
@@ -613,7 +617,22 @@ class ImageGenerationPlugin(Star):
         for record in active_records:
             if record.task_id == task_ref:
                 return record
+
+        if include_finished:
+            record = self.task_manager.get_generation_task(task_ref)
+            if record and record.unified_msg_origin == unified_msg_origin:
+                return record
         return None
+
+    def resolve_active_task_reference(
+        self, unified_msg_origin: str, task_ref: str
+    ) -> GenerationTaskRecord | None:
+        """Resolve a task id or list number into an active task for one session."""
+        return self.resolve_task_reference(
+            unified_msg_origin,
+            task_ref,
+            include_finished=False,
+        )
 
     # ---------------------- 核心生图逻辑 ----------------------
 
@@ -1071,9 +1090,13 @@ class ImageGenerationPlugin(Star):
         task_id = (task_id or "").strip()
 
         if task_id:
-            record = self.resolve_active_task_reference(user_id, task_id)
+            record = self.resolve_task_reference(
+                user_id,
+                task_id,
+                include_finished=True,
+            )
             if not record:
-                yield event.plain_result(f"❌ 正在进行的任务不存在: {task_id}")
+                yield event.plain_result(f"❌ 任务不存在或已被清理: {task_id}")
                 return
             if record.unified_msg_origin != user_id and not self.is_usage_limit_admin(
                 event

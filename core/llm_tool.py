@@ -619,8 +619,9 @@ class ImageTaskTool(FunctionTool[AstrAgentContext]):
 
     name: str = "manage_image_tasks"
     description: str = (
-        "管理当前会话的生图任务。可查看正在进行的任务列表、查看任务详情，"
-        "或取消仍在排队/运行/取消中的任务。"
+        "管理当前会话的生图任务。list 只列出正在进行的任务；"
+        "detail 可查看仍保留记录的进行中或已结束任务；"
+        "cancel 只能取消仍在排队/运行/取消中的任务。"
     )
     parameters: dict = Field(
         default_factory=lambda: {
@@ -634,7 +635,7 @@ class ImageTaskTool(FunctionTool[AstrAgentContext]):
                 },
                 "task": {
                     "type": "string",
-                    "description": "任务编号或任务ID。detail 和 cancel 时填写；编号来自 list 返回的列表序号。",
+                    "description": "任务编号或任务ID。detail 和 cancel 时填写；编号来自 list 返回的正在进行任务列表。已结束任务只能用任务ID查看详情。",
                 },
             },
             "required": [],
@@ -673,9 +674,13 @@ class ImageTaskTool(FunctionTool[AstrAgentContext]):
         if action == "detail":
             if not task_ref:
                 return "❌ 请提供要查看的任务编号或任务ID"
-            record = plugin.resolve_active_task_reference(unified_msg_origin, task_ref)
+            record = plugin.resolve_task_reference(
+                unified_msg_origin,
+                task_ref,
+                include_finished=True,
+            )
             if not record:
-                return f"❌ 正在进行的任务不存在: {task_ref}"
+                return f"❌ 任务不存在或已被清理: {task_ref}"
             return plugin.format_task_detail(record)
 
         if action == "cancel":
