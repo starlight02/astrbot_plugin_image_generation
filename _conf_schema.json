@@ -625,6 +625,97 @@
           }
         }
       },
+      "agnes_ai": {
+        "name": "Agnes AI 接口",
+        "hint": "调用 Agnes AI 图像生成接口，支持文生图和通过 extra_body.image 的图生图；宽高比会在插件内映射为官方 size 字段，不会发送 aspect_ratio 字段。",
+        "display_item": "name",
+        "hide_hint_in_list": true,
+        "items": {
+          "name": {
+            "description": "供应商名称",
+            "hint": "用于显示和模型选择；格式为“供应商名称/模型名称”。",
+            "type": "string",
+            "default": ""
+          },
+          "base_url": {
+            "description": "API Base URL",
+            "hint": "可选。留空使用 https://apihub.agnes-ai.com；也可填写兼容的 API Base URL。",
+            "type": "string",
+            "default": ""
+          },
+          "proxy": {
+            "description": "代理地址",
+            "hint": "可选，示例：http://127.0.0.1:7890。",
+            "type": "string",
+            "default": ""
+          },
+          "api_keys": {
+            "description": "API 密钥",
+            "hint": "填写该供应商的 API Key 或 Token；可配置多个用于轮换。",
+            "type": "list",
+            "default": []
+          },
+          "available_models": {
+            "description": "可用模型列表",
+            "hint": "用于 /生图模型 命令切换；请按账号实际可用模型维护。",
+            "type": "list",
+            "default": [
+              "agnes-image-2.0-flash",
+              "agnes-image-2.1-flash"
+            ]
+          },
+          "capability_options": {
+            "description": "模型能力",
+            "hint": "按当前模型实际能力勾选；Agnes 的“宽高比”仅表示插件会映射为官方 size 字段，不会发送 aspect_ratio 字段。",
+            "type": "list",
+            "options": [
+              "文生图",
+              "图生图",
+              "宽高比",
+              "分辨率"
+            ],
+            "default": [
+              "文生图",
+              "图生图",
+              "宽高比",
+              "分辨率"
+            ]
+          },
+          "timeout": {
+            "description": "超时时间覆盖（秒）",
+            "hint": "填 0 表示使用全局超时时间。",
+            "type": "int",
+            "slider": {
+              "min": 0,
+              "max": 600,
+              "step": 10
+            },
+            "default": 0
+          },
+          "max_retry_attempts": {
+            "description": "重试次数覆盖",
+            "hint": "填 0 表示使用全局重试次数。",
+            "type": "int",
+            "slider": {
+              "min": 0,
+              "max": 10,
+              "step": 1
+            },
+            "default": 0
+          },
+          "seed": {
+            "description": "随机种子",
+            "hint": "可选；Agnes Image 2.0 Flash 支持。填 0 表示不发送 seed。",
+            "type": "int",
+            "slider": {
+              "min": 0,
+              "max": 2147483647,
+              "step": 1
+            },
+            "default": 0
+          }
+        }
+      },
       "jimeng2api": {
         "name": "即梦接口",
         "hint": "调用 iptag/jimeng-api 项目的图像生成接口。",

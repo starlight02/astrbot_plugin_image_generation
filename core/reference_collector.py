@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 
 from .logging_utils import log_prefix, mask_sensitive, safe_log_text, safe_log_url
-from .types import ImageCapability
+from .types import ImageCapability, ImageData
 
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
@@ -18,6 +18,14 @@ if TYPE_CHECKING:
 
 
 LOG = log_prefix("Reference")
+
+
+def ensure_image_data(item: ImageData | tuple[bytes, str]) -> ImageData:
+    """Normalize legacy (data, mime) tuples into ImageData."""
+    if isinstance(item, ImageData):
+        return item
+    data, mime = item
+    return ImageData(data=data, mime_type=mime)
 
 
 def normalize_string_items(raw: Any) -> list[str]:
@@ -58,25 +66,26 @@ def resolve_avatar_user_id(event: Any, ref: str) -> str | None:
 
 
 def deduplicate_reference_images(
-    images_data: list[tuple[bytes, str]],
+    images_data: list[ImageData],
     *,
     task_id: str | None = None,
     log_context: str = "Reference",
-) -> list[tuple[bytes, str]]:
+) -> list[ImageData]:
     """Remove duplicate reference images by content hash."""
     if len(images_data) < 2:
         return images_data
 
-    unique_images: list[tuple[bytes, str]] = []
+    unique_images: list[ImageData] = []
     seen_hashes: set[str] = set()
     duplicate_count = 0
-    for data, mime in images_data:
-        digest = hashlib.sha256(data).hexdigest()
+    for image in images_data:
+        image = ensure_image_data(image)
+        digest = hashlib.sha256(image.data).hexdigest()
         if digest in seen_hashes:
             duplicate_count += 1
             continue
         seen_hashes.add(digest)
-        unique_images.append((data, mime))
+        unique_images.append(image)
 
     if duplicate_count:
         task_log = log_prefix(log_context, task_id) if task_id else LOG
@@ -90,9 +99,9 @@ async def collect_reference_images_from_personas(
     *,
     task_id: str | None = None,
     log_context: str = "Reference",
-) -> list[tuple[bytes, str]]:
+) -> list[ImageData]:
     """Download all configured persona reference images."""
-    images_data: list[tuple[bytes, str]] = []
+    images_data: list[ImageData] = []
     task_log = log_prefix(log_context, task_id) if task_id else LOG
     for persona_name, persona_image in persona_images:
         if persona_image_data := await image_processor.download_image(persona_image):
@@ -111,9 +120,9 @@ async def download_reference_images(
     reference_label: str,
     task_id: str | None = None,
     log_context: str = "Reference",
-) -> list[tuple[bytes, str]]:
+) -> list[ImageData]:
     """Download explicit reference images from URLs or local file paths."""
-    images_data: list[tuple[bytes, str]] = []
+    images_data: list[ImageData] = []
     task_log = log_prefix(log_context, task_id) if task_id else LOG
     for reference in normalize_string_items(references):
         if image_data := await image_processor.download_image(reference):
@@ -131,7 +140,7 @@ async def collect_command_reference_images(
     persona_images: list[tuple[str, str]],
     *,
     task_id: str,
-) -> list[tuple[bytes, str]]:
+) -> list[ImageData]:
     """Collect command persona and message reference images."""
     images_data = await collect_reference_images_from_personas(
         image_processor,
@@ -156,7 +165,7 @@ async def collect_tool_reference_images(
     avatar_references: Any = None,
     persona_images: list[tuple[str, str]] | None = None,
     task_id: str | None = None,
-) -> list[tuple[bytes, str]]:
+) -> list[ImageData]:
     """Collect LLM tool persona, URL/path, and avatar reference images."""
     task_log = log_prefix("LLMTool", task_id) if task_id else LOG
     if not (capabilities & ImageCapability.IMAGE_TO_IMAGE):
@@ -164,7 +173,7 @@ async def collect_tool_reference_images(
             logger.warning(f"{task_log} 当前适配器不支持参考图，已忽略工具参考图参数")
         return []
 
-    images_data: list[tuple[bytes, str]] = []
+    images_data: list[ImageData] = []
     avatar_user_ids: set[str] = set()
 
     if persona_images:
@@ -193,7 +202,7 @@ async def collect_tool_reference_images(
             continue
         avatar_user_ids.add(user_id)
         if avatar_data := await image_processor.get_avatar(user_id):
-            images_data.append((avatar_data, "image/jpeg"))
+            images_data.append(ImageData(data=avatar_data, mime_type="image/jpeg"))
             logger.debug(
                 f"{task_log} 已添加 {mask_sensitive(user_id)} 的头像作为参考图"
             )

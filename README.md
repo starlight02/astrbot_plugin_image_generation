@@ -46,6 +46,7 @@
 | `jimeng2api`          | jimeng-api `/v1/images/generations`、`/v1/images/compositions` |   ✅    |   ✅    |    ✅     | 适用于 [iptag/jimeng-api](https://github.com/iptag/jimeng-api)。                                |
 | `grok`                | xAI Images API `/v1/images/generations`、`/v1/images/edits`    |   ✅    |   ✅    |    ✅     | Grok / xAI 图像生成接口。                                                                       |
 | `siliconflow_adapter` | SiliconFlow Images API `/v1/images/generations`                |   ✅    |   ✅    |    ✅     | 支持 Kolors、Qwen-Image、Qwen-Image-Edit、Z-Image；多参考图映射到 `image`、`image2`、`image3`。 |
+| `agnes_ai`            | Agnes AI Images API `/v1/images/generations`                   |   ✅    |   ✅    |    ✅     | 支持 `agnes-image-2.0-flash` 和 `agnes-image-2.1-flash`；宽高比会在插件内映射为官方 `size` 字段，不会发送 `aspect_ratio` 字段；2.0 图生图会自动附加 `tags: ["img2img"]`，参考图通过 `extra_body.image` 发送。 |
 
 ## 配置
 

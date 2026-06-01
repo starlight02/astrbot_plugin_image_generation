@@ -56,7 +56,9 @@ def detect_mime_type(data: bytes) -> str:
     return "application/octet-stream"
 
 
-def _sync_convert_image_format(image_data: bytes, mime_type: str) -> ImageData:
+def _sync_convert_image_format(
+    image_data: bytes, mime_type: str, source_url: str | None = None
+) -> ImageData:
     """同步将不支持的图像转换为 JPEG。"""
 
     try:
@@ -74,26 +76,34 @@ def _sync_convert_image_format(image_data: bytes, mime_type: str) -> ImageData:
         output = BytesIO()
         img.save(output, format="JPEG", quality=95)
         logger.debug(f"{LOG} 已将图像转换为 JPEG")
-        return ImageData(data=output.getvalue(), mime_type="image/jpeg")
+        return ImageData(
+            data=output.getvalue(), mime_type="image/jpeg", source_url=source_url
+        )
     except Exception as exc:  # noqa: BLE001
         logger.error(f"{LOG} 图像转换失败: {exc}")
-        return ImageData(data=image_data, mime_type=mime_type)
+        return ImageData(data=image_data, mime_type=mime_type, source_url=source_url)
 
 
-async def convert_image_format(image_data: bytes, mime_type: str) -> ImageData:
+async def convert_image_format(
+    image_data: bytes, mime_type: str, source_url: str | None = None
+) -> ImageData:
     """如果 MIME 类型不支持，则转换图像。"""
 
     real_mime = detect_mime_type(image_data)
     if real_mime in SUPPORTED_IMAGE_FORMATS:
-        return ImageData(data=image_data, mime_type=real_mime)
+        return ImageData(data=image_data, mime_type=real_mime, source_url=source_url)
     logger.debug(f"{LOG} 正在转换图像格式: {mime_type} -> image/jpeg")
-    return await asyncio.to_thread(_sync_convert_image_format, image_data, mime_type)
+    return await asyncio.to_thread(
+        _sync_convert_image_format, image_data, mime_type, source_url
+    )
 
 
 async def convert_images_batch(images: Iterable[ImageData]) -> list[ImageData]:
     """并行批量转换图像。"""
 
-    tasks = [convert_image_format(img.data, img.mime_type) for img in images]
+    tasks = [
+        convert_image_format(img.data, img.mime_type, img.source_url) for img in images
+    ]
     return await asyncio.gather(*tasks)
 
 

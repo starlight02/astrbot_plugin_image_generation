@@ -254,7 +254,7 @@ class ImageGenerationPlugin(Star):
         task_id: str,
         source: str,
         prompt: str,
-        images_data: list[tuple[bytes, str]] | None,
+        images_data: list[ImageData] | None,
         unified_msg_origin: str,
         aspect_ratio: str,
         resolution: str,
@@ -640,7 +640,7 @@ class ImageGenerationPlugin(Star):
         self,
         prompt: str,
         unified_msg_origin: str,
-        images_data: list[tuple[bytes, str]] | None = None,
+        images_data: list[ImageData] | None = None,
         aspect_ratio: str = "1:1",
         resolution: str = "1K",
         image_count: int = 1,
@@ -703,8 +703,12 @@ class ImageGenerationPlugin(Star):
 
         images: list[ImageData] = []
         if images_data:
-            for data, mime in images_data:
-                images.append(ImageData(data=data, mime_type=mime))
+            for image in images_data:
+                if isinstance(image, ImageData):
+                    images.append(image)
+                else:
+                    data, mime = image
+                    images.append(ImageData(data=data, mime_type=mime))
         self.task_manager.update_generation_task_references(
             task_id,
             reference_image_count=len(images),
@@ -1231,7 +1235,7 @@ class ImageGenerationPlugin(Star):
             return
 
         task_id = hashlib.md5(f"{time.time()}{user_id}".encode()).hexdigest()[:8]
-        images_data: list[tuple[bytes, str]] | None = None
+        images_data: list[ImageData] | None = None
         if self.generator.adapter.get_capabilities() & ImageCapability.IMAGE_TO_IMAGE:
             try:
                 images_data = await collect_command_reference_images(

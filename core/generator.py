@@ -3,6 +3,7 @@ from __future__ import annotations
 from astrbot.api import logger
 
 from ..adapter import (
+    AgnesAIAdapter,
     GeminiAdapter,
     GeminiOpenAIAdapter,
     GiteeAIAdapter,
@@ -39,6 +40,7 @@ class ImageGenerator:
             AdapterType.SILICONFLOW: SiliconFlowAdapter,
             AdapterType.VOLCENGINE_ARK: VolcengineArkAdapter,
             AdapterType.GITEE_AI: GiteeAIAdapter,
+            AdapterType.AGNES_AI: AgnesAIAdapter,
             AdapterType.JIMENG2API: Jimeng2APIAdapter,
             AdapterType.GROK: GrokAdapter,
         }

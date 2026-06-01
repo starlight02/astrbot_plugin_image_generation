@@ -15,6 +15,7 @@ class AdapterType(str, enum.Enum):
     SILICONFLOW = "siliconflow_adapter"
     VOLCENGINE_ARK = "volcengine_ark"
     GITEE_AI = "gitee_ai"
+    AGNES_AI = "agnes_ai"
     JIMENG2API = "jimeng2api"
     GROK = "grok"
 
@@ -59,10 +60,11 @@ class AdapterConfig:
 
 @dataclass
 class ImageData:
-    """带有 MIME 类型的图像二进制数据。"""
+    """带有 MIME 类型和可选来源 URL 的图像数据。"""
 
     data: bytes
     mime_type: str
+    source_url: str | None = None
 
 
 @dataclass

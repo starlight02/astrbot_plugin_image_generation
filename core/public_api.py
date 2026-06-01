@@ -20,7 +20,7 @@ from .reference_collector import (
     normalize_string_items,
 )
 from .task_manager import GenerationTaskRecord
-from .types import ImageCapability
+from .types import ImageCapability, ImageData
 
 
 LOG = log_prefix("PublicAPI")
@@ -100,7 +100,7 @@ class ImageGenerationPublicAPI:
         aspect_ratio: str | None = None,
         resolution: str | None = None,
         reference_image_sources: Any = None,
-        reference_image_data: list[tuple[bytes, str]] | None = None,
+        reference_image_data: list[ImageData | tuple[bytes, str]] | None = None,
         presets: str | list[str] | None = None,
         personas: str | list[str] | None = None,
         is_admin: bool = False,
@@ -338,7 +338,7 @@ class ImageGenerationPublicAPI:
         aspect_ratio: str | None = None,
         resolution: str | None = None,
         reference_image_sources: Any = None,
-        reference_image_data: list[tuple[bytes, str]] | None = None,
+        reference_image_data: list[ImageData | tuple[bytes, str]] | None = None,
         presets: str | list[str] | None = None,
         personas: str | list[str] | None = None,
         is_admin: bool = False,
@@ -553,10 +553,10 @@ class ImageGenerationPublicAPI:
         self,
         *,
         reference_image_sources: Any,
-        reference_image_data: list[tuple[bytes, str]] | None,
+        reference_image_data: list[ImageData] | None,
         persona_images: list[tuple[str, str]],
         task_id: str,
-    ) -> list[tuple[bytes, str]]:
+    ) -> list[ImageData]:
         plugin = self._plugin
         if not plugin.generator or not plugin.generator.adapter:
             return []
@@ -571,7 +571,7 @@ class ImageGenerationPublicAPI:
                 )
             return []
 
-        images_data: list[tuple[bytes, str]] = []
+        images_data: list[ImageData] = []
         if persona_images:
             images_data.extend(
                 await collect_reference_images_from_personas(
@@ -599,9 +599,9 @@ class ImageGenerationPublicAPI:
 
     def _normalize_reference_image_data(
         self,
-        reference_image_data: list[tuple[bytes, str]] | None,
-    ) -> list[tuple[bytes, str]]:
-        images_data: list[tuple[bytes, str]] = []
+        reference_image_data: list[ImageData] | None,
+    ) -> list[ImageData]:
+        images_data: list[ImageData] = []
         max_size = self._plugin.config_manager.usage_settings.max_image_size_mb
         for item in reference_image_data or []:
             try:
@@ -617,5 +617,5 @@ class ImageGenerationPublicAPI:
             if len(data) > max_size * 1024 * 1024:
                 logger.warning(f"{LOG} 已忽略超过大小限制的二进制参考图 ({max_size}MB)")
                 continue
-            images_data.append((data, str(mime or "image/png")))
+            images_data.append(ImageData(data=data, mime_type=str(mime or "image/png")))
         return images_data

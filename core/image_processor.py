@@ -16,6 +16,7 @@ from astrbot.api import logger
 from astrbot.core.utils.io import download_image_by_url
 
 from .logging_utils import log_prefix, mask_sensitive, safe_log_url
+from .types import ImageData
 
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
@@ -110,15 +111,17 @@ class ImageProcessor:
             path = path[1:]
         return os.path.normpath(path)
 
-    async def download_image(self, url: str) -> tuple[bytes, str] | None:
-        """下载或读取图片并返回二进制数据和 MIME 类型。"""
+    async def download_image(self, url: str) -> ImageData | None:
+        """下载或读取图片并返回图像数据、MIME 类型和可选来源 URL。"""
         try:
             url = url.strip()
             if not url:
                 return None
 
             data: bytes | None = None
+            source_url = url if self._is_network_url(url) else None
             if local_path := self._resolve_local_path(url):
+                source_url = None
                 with open(local_path, "rb") as f:
                     data = f.read()
             else:
@@ -141,7 +144,7 @@ class ImageProcessor:
                 return None
 
             mime = self._detect_mime_type(data)
-            return data, mime
+            return ImageData(data=data, mime_type=mime, source_url=source_url)
         except Exception as exc:
             logger.error(f"{LOG} 获取图片失败: {safe_log_url(url)} ({exc})")
         return None
@@ -215,9 +218,9 @@ class ImageProcessor:
         self,
         event: AstrMessageEvent,
         avatar_user_ids: set[str] | None = None,
-    ) -> list[tuple[bytes, str]]:
+    ) -> list[ImageData]:
         """从消息事件中提取图片（包括直接发送的图片、引用消息中的图片、被@用户的头像）。"""
-        images_data: list[tuple[bytes, str]] = []
+        images_data: list[ImageData] = []
         if avatar_user_ids is None:
             avatar_user_ids = set()
 
@@ -261,7 +264,7 @@ class ImageProcessor:
                             continue
                         avatar_user_ids.add(uid)
                         if avatar_data := await self.get_avatar(uid):
-                            images_data.append((avatar_data, "image/jpeg"))
+                            images_data.append(ImageData(data=avatar_data, mime_type="image/jpeg"))
             except Exception as e:
                 logger.error(f"{LOG} 提取消息组件图片失败: {e}", exc_info=True)
                 continue
