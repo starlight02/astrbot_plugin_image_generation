@@ -1222,7 +1222,7 @@
         ]
       },
       "personas": {
-        "description": "人设模板(暂不可用,请等待 #8228 修复合并入AstrBot)",
+        "description": "人设模板",
         "hint": "配置固定人设描述和参考图；使用 /生图 <人设名称> [额外提示词] 时自动应用。",
         "type": "template_list",
         "default": [],

@@ -1,4 +1,8 @@
 ### 更新日志
+- **v1.2.9-2026-06-05**
+  - 合并 [PR #29](https://github.com/Railgun19457/astrbot_plugin_image_generation/pull/29),添加Agnes AI适配器
+  - 移除配置中关于人设模板的警告
+  - 调整最低AstrBot版本至`4.25.3`
 
 - **v1.2.8-2026-05-30**
   - 新增插件间公共 API：其他插件可通过 `plugin.public_api` 提交生图任务、查询状态、取消任务、等待结果并获取生成图片本地路径。
