@@ -203,6 +203,7 @@
 
 ### 插件间公共 API
 本插件提供 `plugin.public_api` 供其他 AstrBot 插件复用生图能力
+
 详细接口参数、返回对象和调用示例见：[插件间公共 API 文档](docs/public-api.md)。
 
 ### PR
