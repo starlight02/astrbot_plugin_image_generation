@@ -36,7 +36,10 @@ from .core.llm_tool import (
     adjust_tool_parameters,
 )
 from .core.public_api import ImageGenerationPublicAPI
-from .core.reference_collector import collect_command_reference_images
+from .core.reference_collector import (
+    collect_command_reference_images,
+    ensure_image_data,
+)
 from .core.constants import UNSPECIFIED_OPTION
 from .core.logging_utils import (
     log_prefix,
@@ -264,13 +267,39 @@ class ImageGenerationPlugin(Star):
             and self.config_manager.adapter_config.api_keys
         )
 
+    def reload_runtime_settings(self) -> None:
+        """Refresh runtime helpers after config values are reloaded."""
+        self.usage_manager.update_settings(self.config_manager.usage_settings)
+        self.image_processor.update_settings(
+            self.config_manager.usage_settings.max_image_size_mb
+        )
+        self.request_semaphore = asyncio.Semaphore(
+            self.config_manager.max_concurrent_tasks
+        )
+
+    def _cleanup_generated_images(
+        self,
+        task_id: str,
+        image_paths: list[str],
+        *,
+        reason: str,
+    ) -> None:
+        """Cleanup generated temp images that will not be delivered."""
+        if not image_paths or not self.config_manager.cleanup_failed_task_images:
+            return
+        removed = self.image_processor.delete_generated_images(image_paths)
+        if removed:
+            logger.debug(
+                f"{log_prefix('Task', task_id)} 已清理 {removed} 张临时生成图片，原因={safe_log_text(reason)}"
+            )
+
     def create_generation_task(
         self,
         *,
         task_id: str,
         source: str,
         prompt: str,
-        images_data: list[ImageData] | None,
+        images_data: list[ImageData | tuple[bytes, str]] | None,
         unified_msg_origin: str,
         aspect_ratio: str,
         resolution: str,
@@ -538,7 +567,7 @@ class ImageGenerationPlugin(Star):
         self,
         prompt: str,
         unified_msg_origin: str,
-        images_data: list[ImageData] | None = None,
+        images_data: list[ImageData | tuple[bytes, str]] | None = None,
         aspect_ratio: str = "1:1",
         resolution: str = "1K",
         image_count: int = 1,
@@ -600,11 +629,7 @@ class ImageGenerationPlugin(Star):
         images: list[ImageData] = []
         if images_data:
             for image in images_data:
-                if isinstance(image, ImageData):
-                    images.append(image)
-                else:
-                    data, mime = image
-                    images.append(ImageData(data=data, mime_type=mime))
+                images.append(ensure_image_data(image))
         self.task_manager.update_generation_task_references(
             task_id,
             reference_image_count=len(images),
@@ -716,11 +741,29 @@ class ImageGenerationPlugin(Star):
         )
 
         # 生图后图片审核
-        image_allowed, image_reason = await self.safety_auditor.audit_generated_images(
-            prompt=prompt,
-            image_paths=generated_file_paths,
-            unified_msg_origin=unified_msg_origin,
-        )
+        try:
+            (
+                image_allowed,
+                image_reason,
+            ) = await self.safety_auditor.audit_generated_images(
+                prompt=prompt,
+                image_paths=generated_file_paths,
+                unified_msg_origin=unified_msg_origin,
+            )
+        except asyncio.CancelledError:
+            self._cleanup_generated_images(
+                task_id,
+                generated_file_paths,
+                reason="任务取消",
+            )
+            raise
+        except Exception:
+            self._cleanup_generated_images(
+                task_id,
+                generated_file_paths,
+                reason="图片内容审核异常",
+            )
+            raise
         if not image_allowed:
             # 生成已消耗模型调用成本，即使审核失败也计入实际生成额度。
             if unified_msg_origin:
@@ -730,6 +773,11 @@ class ImageGenerationPlugin(Star):
                     reserved_count=image_count,
                     actual_count=len(generated_file_paths),
                 )
+            self._cleanup_generated_images(
+                task_id,
+                generated_file_paths,
+                reason="图片内容审核未通过",
+            )
             self.task_manager.mark_generation_task_failed(
                 task_id,
                 f"图片内容审核未通过: {image_reason}",
@@ -774,11 +822,19 @@ class ImageGenerationPlugin(Star):
             task_id=task_id,
         )
 
-        sent_batches, send_errors = await self._send_generated_images(
-            unified_msg_origin,
-            generated_file_paths,
-            info_message=info_message,
-        )
+        try:
+            sent_batches, send_errors = await self._send_generated_images(
+                unified_msg_origin,
+                generated_file_paths,
+                info_message=info_message,
+            )
+        except asyncio.CancelledError:
+            self._cleanup_generated_images(
+                task_id,
+                generated_file_paths,
+                reason="任务取消",
+            )
+            raise
         if send_errors:
             delivery_message = (
                 f"图片已生成；已发送 {sent_batches} 批，"
@@ -990,6 +1046,13 @@ class ImageGenerationPlugin(Star):
 
                     if next_index <= image_count:
                         await schedule_next_request()
+        except asyncio.CancelledError:
+            self._cleanup_generated_images(
+                task_id,
+                generated_file_paths,
+                reason="任务取消",
+            )
+            raise
         finally:
             for pending_task in pending_tasks:
                 pending_task.cancel()
@@ -1245,6 +1308,7 @@ class ImageGenerationPlugin(Star):
                 # 更新配置并重新加载
                 self.config_manager.save_model_setting(raw_model)
                 self.config_manager.reload()
+                self.reload_runtime_settings()
 
                 if self.generator:
                     await self.generator.update_adapter(

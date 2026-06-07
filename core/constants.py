@@ -79,6 +79,9 @@ DEFAULT_MAX_GENERATION_IMAGE_COUNT = 10
 DEFAULT_MAX_IMAGES_PER_MESSAGE = 5
 """默认单条消息最多发送的图片数量。"""
 
+DEFAULT_CLEANUP_FAILED_TASK_IMAGES = False
+"""Default cleanup behavior for undispatched images from failed tasks."""
+
 DEFAULT_MAX_IMAGE_SIZE_MB = 10
 """默认最大图片大小（MB）。"""
 
