@@ -113,10 +113,7 @@ class ImageGenerationPublicAPI:
                 "生图生成器未初始化",
             )
 
-        if (
-            not plugin.config_manager.adapter_config
-            or not plugin.config_manager.adapter_config.api_keys
-        ):
+        if not plugin.has_required_api_key():
             return self._submit_error("api_key_missing", "未配置 API Key，无法生成图片")
 
         request_source = str(source or DEFAULT_SOURCE).strip() or DEFAULT_SOURCE

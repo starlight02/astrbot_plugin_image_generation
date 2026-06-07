@@ -21,6 +21,7 @@ from .constants import SUPPORTED_ASPECT_RATIOS, SUPPORTED_RESOLUTIONS
 from .logging_utils import (
     log_prefix,
     mask_sensitive,
+    safe_log_error_body,
     safe_log_text,
 )
 from .reference_collector import collect_tool_reference_images, normalize_string_items
@@ -303,10 +304,7 @@ async def _start_generation_task(
 
     image_count = plugin.normalize_image_count(image_count)
     is_usage_limit_admin = plugin.is_usage_limit_admin(event)
-    if (
-        not plugin.config_manager.adapter_config
-        or not plugin.config_manager.adapter_config.api_keys
-    ):
+    if not plugin.has_required_api_key():
         masked_uid = mask_sensitive(event.unified_msg_origin)
         logger.warning(f"{LOG} 工具调用失败: 未配置 API Key (用户: {masked_uid})")
         return "❌ 未配置 API Key，无法生成图片"
@@ -361,7 +359,7 @@ async def _start_generation_task(
         )
     except Exception as exc:
         logger.error(
-            f"{log_prefix('LLMTool', task_id)} 处理参考图失败: {exc}",
+            f"{log_prefix('LLMTool', task_id)} 处理参考图失败: {safe_log_error_body(exc, 200)}",
             exc_info=True,
         )
         images_data = []

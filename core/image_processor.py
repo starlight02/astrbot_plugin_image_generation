@@ -9,6 +9,7 @@ import ntpath
 import os
 import posixpath
 import re
+import time
 from collections.abc import Iterable
 from io import BytesIO
 from typing import TYPE_CHECKING
@@ -46,6 +47,14 @@ PIL_VERIFIABLE_IMAGE_MIME_TYPES = frozenset(
         "image/webp",
     }
 )
+GENERATED_IMAGE_EXTENSIONS = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/heic": ".heic",
+    "image/heif": ".heif",
+}
 
 
 class ImageProcessor:
@@ -437,9 +446,9 @@ class ImageProcessor:
     def save_generated_image(self, task_id: str, img_bytes: bytes) -> str | None:
         """保存生成的图片到临时目录，返回文件路径。"""
         try:
-            import time
-
-            file_name = f"gen_{task_id}_{int(time.time())}_{hashlib.md5(img_bytes).hexdigest()[:6]}.png"
+            mime = self._detect_mime_type(img_bytes)
+            extension = GENERATED_IMAGE_EXTENSIONS.get(mime, ".png")
+            file_name = f"gen_{task_id}_{int(time.time())}_{hashlib.md5(img_bytes).hexdigest()[:6]}{extension}"
             file_path = os.path.join(self._temp_dir, file_name)
             with open(file_path, "wb") as f:
                 f.write(img_bytes)

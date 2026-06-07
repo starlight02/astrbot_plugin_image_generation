@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import datetime
 import json
-import os
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from astrbot.api import logger
@@ -26,10 +26,11 @@ class UsageManager:
     """用户使用数据管理器。"""
 
     def __init__(self, data_dir: str, settings: UsageSettings):
-        self._data_dir = data_dir
+        self._data_dir = Path(data_dir)
         self._settings = settings
-        self._usage_file = os.path.join(data_dir, "usage.json")
+        self._usage_file = self._data_dir / "usage.json"
         self._usage_data: dict[str, dict[str, int]] = {}  # {date: {user_id: count}}
+        self._usage_reservations: dict[str, dict[str, int]] = {}
         self._user_request_timestamps: dict[str, float] = {}  # 用于频率限制
         self._load_usage_data()
 
@@ -39,9 +40,9 @@ class UsageManager:
 
     def _load_usage_data(self) -> None:
         """加载用户使用数据。"""
-        if os.path.exists(self._usage_file):
+        if self._usage_file.exists():
             try:
-                with open(self._usage_file, encoding="utf-8") as f:
+                with self._usage_file.open(encoding="utf-8") as f:
                     self._usage_data = json.load(f)
 
                 # 清理旧数据，只保留最近 N 天（由 USAGE_DATA_RETENTION_DAYS 控制）
@@ -66,11 +67,28 @@ class UsageManager:
     def _save_usage_data(self) -> None:
         """保存用户使用数据。"""
         try:
-            os.makedirs(os.path.dirname(self._usage_file), exist_ok=True)
-            with open(self._usage_file, "w", encoding="utf-8") as f:
+            self._usage_file.parent.mkdir(parents=True, exist_ok=True)
+            with self._usage_file.open("w", encoding="utf-8") as f:
                 json.dump(self._usage_data, f, ensure_ascii=False, indent=2)
         except Exception as exc:
             logger.error(f"{LOG} 保存使用数据失败: {exc}", exc_info=True)
+
+    def _today(self) -> str:
+        """Return today's date key for usage accounting."""
+        return datetime.date.today().isoformat()
+
+    def _get_reserved_usage(self, date: str, user_id: str) -> int:
+        """Return pending reserved usage for one user."""
+        return self._usage_reservations.get(date, {}).get(user_id, 0)
+
+    def _reserve_usage(self, date: str, user_id: str, count: int) -> None:
+        """Reserve quota before an async generation task starts."""
+        count = max(0, count)
+        if count <= 0:
+            return
+        self._usage_reservations.setdefault(date, {})[user_id] = (
+            self._get_reserved_usage(date, user_id) + count
+        )
 
     def is_session_blocked(self, user_id: str) -> bool:
         """Check whether the current session UMO is blocked."""
@@ -105,6 +123,8 @@ class UsageManager:
         Args:
             update_timestamp: Whether to reserve the cooldown when checks pass.
         """
+        user_id = str(user_id or "").strip()
+
         # 1. 检查频率限制
         if self.is_limit_exempt(user_id, is_admin=is_admin):
             return True
@@ -124,17 +144,26 @@ class UsageManager:
         # 2. 检查每日限制
         if self._settings.enable_daily_limit:
             requested_count = max(1, requested_count)
-            today = datetime.date.today().isoformat()
+            today = self._today()
             if today not in self._usage_data:
                 self._usage_data[today] = {}
 
             count = self._usage_data[today].get(user_id, 0)
-            if count + requested_count > self._settings.daily_limit_count:
-                remaining = max(0, self._settings.daily_limit_count - count)
+            reserved_count = self._get_reserved_usage(today, user_id)
+            if (
+                count + reserved_count + requested_count
+                > self._settings.daily_limit_count
+            ):
+                remaining = max(
+                    0,
+                    self._settings.daily_limit_count - count - reserved_count,
+                )
                 return (
                     f"❌ 今日剩余生图额度不足，剩余 {remaining} 张，"
                     f"本次请求 {requested_count} 张"
                 )
+            if update_timestamp:
+                self._reserve_usage(today, user_id, requested_count)
 
         return True
 
@@ -152,7 +181,7 @@ class UsageManager:
             return
 
         count = max(1, count)
-        today = datetime.date.today().isoformat()
+        today = self._today()
         if today not in self._usage_data:
             self._usage_data[today] = {}
         self._usage_data[today][user_id] = (
@@ -160,9 +189,74 @@ class UsageManager:
         )
         self._save_usage_data()
 
+    def release_reserved_usage(
+        self,
+        user_id: str,
+        *,
+        is_admin: bool = False,
+        count: int = 1,
+    ) -> None:
+        """Release previously reserved quota without recording usage."""
+        if not self._settings.enable_daily_limit:
+            return
+        if self.is_limit_exempt(user_id, is_admin=is_admin):
+            return
+
+        user_id = str(user_id or "").strip()
+        if not user_id:
+            return
+
+        today = self._today()
+        reservations = self._usage_reservations.get(today)
+        if not reservations or user_id not in reservations:
+            return
+
+        remaining = max(0, reservations[user_id] - max(0, count))
+        if remaining:
+            reservations[user_id] = remaining
+            return
+
+        del reservations[user_id]
+        if not reservations:
+            del self._usage_reservations[today]
+
+    def settle_usage(
+        self,
+        user_id: str,
+        *,
+        is_admin: bool = False,
+        reserved_count: int = 0,
+        actual_count: int = 0,
+    ) -> None:
+        """Record actual usage and release the matching reservation."""
+        if not self._settings.enable_daily_limit:
+            return
+        if self.is_limit_exempt(user_id, is_admin=is_admin):
+            return
+
+        user_id = str(user_id or "").strip()
+        if not user_id:
+            return
+
+        actual_count = max(0, actual_count)
+        if actual_count:
+            today = self._today()
+            if today not in self._usage_data:
+                self._usage_data[today] = {}
+            self._usage_data[today][user_id] = (
+                self._usage_data[today].get(user_id, 0) + actual_count
+            )
+            self._save_usage_data()
+
+        self.release_reserved_usage(
+            user_id,
+            is_admin=is_admin,
+            count=max(0, reserved_count),
+        )
+
     def get_usage_count(self, user_id: str) -> int:
         """获取用户今日使用次数。"""
-        today = datetime.date.today().isoformat()
+        today = self._today()
         return self._usage_data.get(today, {}).get(user_id, 0)
 
     def get_daily_limit(self) -> int:

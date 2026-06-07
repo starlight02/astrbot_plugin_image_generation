@@ -114,9 +114,10 @@ class CustomHTTPAdapter(BaseImageAdapter):
         except Exception as exc:  # noqa: BLE001
             duration = time.time() - start_time
             logger.error(
-                f"{prefix} 自定义 HTTP 请求异常 (耗时: {duration:.2f}s): {exc}"
+                f"{prefix} 自定义 HTTP 请求异常 (耗时: {duration:.2f}s): "
+                f"{safe_log_error_body(exc)}"
             )
-            return None, str(exc)
+            return None, safe_log_error_body(exc)
 
     def _request_method(self) -> str:
         method = str(self.config.extra.get("request_method") or "POST").strip().upper()

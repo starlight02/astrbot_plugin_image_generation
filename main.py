@@ -48,6 +48,7 @@ from .core.constants import UNSPECIFIED_OPTION
 from .core.logging_utils import (
     log_prefix,
     mask_sensitive,
+    safe_log_error_body,
     safe_log_text,
 )
 from .core.safety_auditor import SafetyAuditor
@@ -247,6 +248,20 @@ class ImageGenerationPlugin(Star):
     ) -> asyncio.Task:
         """创建后台任务并添加到管理器中。"""
         return self.task_manager.create_task(coro, name=name)
+
+    def current_adapter_requires_api_key(self) -> bool:
+        """Return whether the active adapter requires an API key."""
+        adapter = self.generator.adapter if self.generator else None
+        return bool(getattr(adapter, "requires_api_key", True))
+
+    def has_required_api_key(self) -> bool:
+        """Return whether the active adapter has all required credentials."""
+        if not self.current_adapter_requires_api_key():
+            return True
+        return bool(
+            self.config_manager.adapter_config
+            and self.config_manager.adapter_config.api_keys
+        )
 
     def create_generation_task(
         self,
@@ -741,18 +756,35 @@ class ImageGenerationPlugin(Star):
             f"分辨率={safe_log_text(final_res or UNSPECIFIED_OPTION)}"
         )
 
-        await self._do_generate_and_send(
-            prompt,
-            unified_msg_origin,
-            images,
-            final_ar,
-            final_res,
-            image_count,
-            task_id,
-            is_usage_limit_admin,
-            deliver_via_ai,
-            auto_send,
-        )
+        try:
+            await self._do_generate_and_send(
+                prompt,
+                unified_msg_origin,
+                images,
+                final_ar,
+                final_res,
+                image_count,
+                task_id,
+                is_usage_limit_admin,
+                deliver_via_ai,
+                auto_send,
+            )
+        except asyncio.CancelledError:
+            if unified_msg_origin:
+                self.usage_manager.release_reserved_usage(
+                    unified_msg_origin,
+                    is_admin=is_usage_limit_admin,
+                    count=image_count,
+                )
+            raise
+        except Exception:
+            if unified_msg_origin:
+                self.usage_manager.release_reserved_usage(
+                    unified_msg_origin,
+                    is_admin=is_usage_limit_admin,
+                    count=image_count,
+                )
+            raise
 
     async def _do_generate_and_send(
         self,
@@ -774,6 +806,12 @@ class ImageGenerationPlugin(Star):
         if not self.generator:
             logger.warning(f"{task_log} 生成器未初始化，跳过生成请求")
             self.task_manager.mark_generation_task_failed(task_id, "生图生成器未初始化")
+            if unified_msg_origin:
+                self.usage_manager.release_reserved_usage(
+                    unified_msg_origin,
+                    is_admin=is_usage_limit_admin,
+                    count=image_count,
+                )
             return
         logger.debug(
             f"{task_log} 调用生图适配器: 数量={image_count}张，参考图={len(images)}张，"
@@ -799,6 +837,12 @@ class ImageGenerationPlugin(Star):
         if not generated_file_paths:
             error = "; ".join(errors) or "模型未返回图片"
             self.task_manager.mark_generation_task_failed(task_id, error)
+            if unified_msg_origin:
+                self.usage_manager.release_reserved_usage(
+                    unified_msg_origin,
+                    is_admin=is_usage_limit_admin,
+                    count=image_count,
+                )
             if deliver_via_ai or not auto_send or not unified_msg_origin:
                 return
             await self.context.send_message(
@@ -820,10 +864,11 @@ class ImageGenerationPlugin(Star):
         if not image_allowed:
             # 生成已消耗模型调用成本，即使审核失败也计入实际生成额度。
             if unified_msg_origin:
-                self.usage_manager.record_usage(
+                self.usage_manager.settle_usage(
                     unified_msg_origin,
                     is_admin=is_usage_limit_admin,
-                    count=len(generated_file_paths),
+                    reserved_count=image_count,
+                    actual_count=len(generated_file_paths),
                 )
             self.task_manager.mark_generation_task_failed(
                 task_id,
@@ -837,26 +882,26 @@ class ImageGenerationPlugin(Star):
             )
             return
 
-        result_message = "图片已生成，等待 AI 处理" if deliver_via_ai else "图片已发送"
+        result_message = "图片已生成，等待 AI 处理" if deliver_via_ai else "图片已生成"
         if errors:
             result_message = f"{result_message}；部分失败: {'; '.join(errors)}"
 
-        self.task_manager.mark_generation_task_succeeded(
-            task_id,
-            result_count=len(generated_file_paths),
-            result_paths=generated_file_paths,
-            message=result_message,
-        )
-
         # 记录实际成功生成的图片数量
         if unified_msg_origin:
-            self.usage_manager.record_usage(
+            self.usage_manager.settle_usage(
                 unified_msg_origin,
                 is_admin=is_usage_limit_admin,
-                count=len(generated_file_paths),
+                reserved_count=image_count,
+                actual_count=len(generated_file_paths),
             )
 
         if deliver_via_ai or not auto_send or not unified_msg_origin:
+            self.task_manager.mark_generation_task_succeeded(
+                task_id,
+                result_count=len(generated_file_paths),
+                result_paths=generated_file_paths,
+                message=result_message,
+            )
             return
 
         info_parts = []
@@ -897,10 +942,26 @@ class ImageGenerationPlugin(Star):
         else:
             info_message = ""
 
-        await self._send_generated_images(
+        sent_batches, send_errors = await self._send_generated_images(
             unified_msg_origin,
             generated_file_paths,
             info_message=info_message,
+        )
+        if send_errors:
+            delivery_message = (
+                f"图片已生成；已发送 {sent_batches} 批，"
+                f"发送失败 {len(send_errors)} 批: {'; '.join(send_errors)}"
+            )
+        else:
+            delivery_message = "图片已发送"
+        if errors:
+            delivery_message = f"{delivery_message}；部分生成失败: {'; '.join(errors)}"
+
+        self.task_manager.mark_generation_task_succeeded(
+            task_id,
+            result_count=len(generated_file_paths),
+            result_paths=generated_file_paths,
+            message=delivery_message,
         )
 
     async def _send_generated_images(
@@ -909,10 +970,12 @@ class ImageGenerationPlugin(Star):
         image_paths: list[str],
         *,
         info_message: str = "",
-    ) -> None:
+    ) -> tuple[int, list[str]]:
         """按配置将生成图片分批发送，避免单条消息图片过多。"""
         max_per_message = max(1, self.config_manager.max_images_per_message)
         total = len(image_paths)
+        sent_batches = 0
+        errors: list[str] = []
         for start in range(0, total, max_per_message):
             batch_paths = image_paths[start : start + max_per_message]
             chain = MessageChain()
@@ -923,7 +986,17 @@ class ImageGenerationPlugin(Star):
             if is_last_batch and info_message:
                 chain.message("\n" + info_message)
 
-            await self.context.send_message(unified_msg_origin, chain)
+            batch_index = start // max_per_message + 1
+            try:
+                await self.context.send_message(unified_msg_origin, chain)
+                sent_batches += 1
+            except Exception as exc:
+                error_message = (
+                    f"第 {batch_index} 批发送失败: {safe_log_error_body(exc, 160)}"
+                )
+                errors.append(error_message)
+                logger.error(f"{LOG} {error_message}", exc_info=True)
+        return sent_batches, errors
 
     async def _generate_image_requests_concurrently(
         self,
@@ -971,7 +1044,9 @@ class ImageGenerationPlugin(Star):
                         task_id=task_id,
                         batch_index=current_index,
                         batch_count=image_count,
-                        retry_status_callback=lambda retry_attempt, max_retry_attempts, current_index=current_index: (
+                        retry_status_callback=lambda retry_attempt,
+                        max_retry_attempts,
+                        current_index=current_index: (
                             self.task_manager.update_generation_task_retry_status(
                                 task_id,
                                 current_index=current_index,
@@ -1003,7 +1078,10 @@ class ImageGenerationPlugin(Star):
                         raise
                     except Exception as exc:
                         result = None
-                        error_message = f"第 {current_index} 张生成失败: {exc}"
+                        error_message = (
+                            f"第 {current_index} 张生成失败: "
+                            f"{safe_log_error_body(exc, 200)}"
+                        )
                         errors.append(error_message)
                         self.task_manager.update_generation_task_item_result(
                             task_id,
@@ -1012,7 +1090,7 @@ class ImageGenerationPlugin(Star):
                             error=str(exc),
                         )
                         logger.warning(
-                            f"{task_log} {safe_log_text(error_message, 200)}"
+                            f"{task_log} {safe_log_error_body(error_message, 200)}"
                         )
 
                     if result is None:
@@ -1028,7 +1106,7 @@ class ImageGenerationPlugin(Star):
                             error=result.error,
                         )
                         logger.warning(
-                            f"{task_log} {safe_log_text(error_message, 200)}"
+                            f"{task_log} {safe_log_error_body(error_message, 200)}"
                         )
                     elif not result.images:
                         error_message = f"第 {current_index} 张生成失败: 模型未返回图片"
@@ -1220,10 +1298,7 @@ class ImageGenerationPlugin(Star):
             yield event.plain_result("❌ 请提供图片生成的提示词或预设名称！")
             return
 
-        if (
-            not self.config_manager.adapter_config
-            or not self.config_manager.adapter_config.api_keys
-        ):
+        if not self.has_required_api_key():
             logger.warning(f"{LOG} 生图指令失败: 未配置 API Key，用户={masked_uid}")
             yield event.plain_result("❌ 未配置 API Key，无法生成图片")
             return
