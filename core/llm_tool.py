@@ -4,9 +4,7 @@ LLM 可调用的图像生成工具模块
 
 from __future__ import annotations
 
-import hashlib
 import json
-import time
 from typing import Any
 
 from pydantic import Field
@@ -21,9 +19,16 @@ from .constants import SUPPORTED_ASPECT_RATIOS, SUPPORTED_RESOLUTIONS
 from .logging_utils import (
     log_prefix,
     mask_sensitive,
+    safe_log_error_body,
     safe_log_text,
 )
 from .reference_collector import collect_tool_reference_images, normalize_string_items
+from .task_id import new_task_id
+from .template_utils import (
+    format_template_summary,
+    normalize_name_items,
+    parse_preset_prompt,
+)
 from .types import ImageCapability
 
 
@@ -51,19 +56,7 @@ def _normalize_string_items(raw: Any) -> list[str]:
 
 def _normalize_name_items(raw: Any) -> list[str]:
     """Normalize one or many preset/persona names from tool arguments."""
-    names: list[str] = []
-    seen: set[str] = set()
-    for item in _normalize_string_items(raw):
-        for name in item.split():
-            normalized = name.strip()
-            if not normalized:
-                continue
-            lowered = normalized.lower()
-            if lowered in seen:
-                continue
-            seen.add(lowered)
-            names.append(normalized)
-    return names
+    return normalize_name_items(raw)
 
 
 def _format_template_summary(
@@ -71,21 +64,7 @@ def _format_template_summary(
     matched_personas: list[str],
 ) -> tuple[str | None, str]:
     """Format matched preset/persona names for task metadata."""
-    if matched_presets and matched_personas:
-        return (
-            "；".join(
-                (
-                    f"预设: {'、'.join(matched_presets)}",
-                    f"人设: {'、'.join(matched_personas)}",
-                )
-            ),
-            "预设/人设",
-        )
-    if matched_presets:
-        return "、".join(matched_presets), "预设"
-    if matched_personas:
-        return "、".join(matched_personas), "人设"
-    return None, "预设"
+    return format_template_summary(matched_presets, matched_personas)
 
 
 def _normalize_preset_query_category(category: str) -> str:
@@ -224,17 +203,11 @@ def _parse_preset(
                 f"❌ 预设不存在: {preset_name}",
             )
 
-        preset_content = plugin.config_manager.presets[matched_preset]
-        preset_prompt = str(preset_content or "").strip()
-        if preset_prompt.startswith("{"):
-            try:
-                preset_data = json.loads(preset_prompt)
-                if isinstance(preset_data, dict):
-                    preset_prompt = str(preset_data.get("prompt", "") or "").strip()
-                    aspect_ratio = str(preset_data.get("aspect_ratio") or aspect_ratio)
-                    resolution = str(preset_data.get("resolution") or resolution)
-            except json.JSONDecodeError:
-                pass
+        preset_prompt, aspect_ratio, resolution = parse_preset_prompt(
+            plugin.config_manager.presets[matched_preset],
+            str(aspect_ratio),
+            str(resolution),
+        )
 
         if preset_prompt:
             prompt_parts.append(preset_prompt)
@@ -303,10 +276,7 @@ async def _start_generation_task(
 
     image_count = plugin.normalize_image_count(image_count)
     is_usage_limit_admin = plugin.is_usage_limit_admin(event)
-    if (
-        not plugin.config_manager.adapter_config
-        or not plugin.config_manager.adapter_config.api_keys
-    ):
+    if not plugin.has_required_api_key():
         masked_uid = mask_sensitive(event.unified_msg_origin)
         logger.warning(f"{LOG} 工具调用失败: 未配置 API Key (用户: {masked_uid})")
         return "❌ 未配置 API Key，无法生成图片"
@@ -345,9 +315,7 @@ async def _start_generation_task(
             )
         return check_result
 
-    task_id = hashlib.md5(
-        f"{time.time()}{event.unified_msg_origin}".encode()
-    ).hexdigest()[:8]
+    task_id = new_task_id()
     capabilities = plugin.generator.adapter.get_capabilities()
     try:
         images_data = await collect_tool_reference_images(
@@ -361,7 +329,7 @@ async def _start_generation_task(
         )
     except Exception as exc:
         logger.error(
-            f"{log_prefix('LLMTool', task_id)} 处理参考图失败: {exc}",
+            f"{log_prefix('LLMTool', task_id)} 处理参考图失败: {safe_log_error_body(exc, 200)}",
             exc_info=True,
         )
         images_data = []

@@ -25,6 +25,7 @@ api = image_plugin.public_api
 - 提示词审核和图片审核仍按插件配置执行
 - `task_id` 由 API 自动生成
 - 任务记录保存在内存中，插件重载后会清空
+- 返回对象的 `code` 来自 `core.public_api.PublicAPIResultCode`，调用方可直接与字符串值比较，也可导入该枚举避免手写返回码
 
 ## 接口总览
 
@@ -52,7 +53,7 @@ async def submit_generation_task(
     aspect_ratio: str | None = None,
     resolution: str | None = None,
     reference_image_sources: Any = None,
-    reference_image_data: list[tuple[bytes, str]] | None = None,
+    reference_image_data: list[ImageData | tuple[bytes, str]] | None = None,
     presets: str | list[str] | None = None,
     personas: str | list[str] | None = None,
     is_admin: bool = False,
@@ -70,7 +71,7 @@ async def submit_generation_task(
 | `aspect_ratio` | 宽高比；不传使用插件默认值，如 `"1:1"`、`"16:9"`、`"不指定"`。 |
 | `resolution` | 分辨率；不传使用插件默认值，如 `"1K"`、`"2K"`、`"4K"`、`"不指定"`。 |
 | `reference_image_sources` | 参考图来源。支持字符串、列表、嵌套列表、包含 `url`/`path`/`file`/`name` 的字典；可为 HTTP(S) URL、本地路径、`file://` URL 或插件数据目录下 `files/...` 路径。本地路径仅允许当前会话 workspace、AstrBot temp 目录和本插件数据目录，并会校验真实图片类型。 |
-| `reference_image_data` | 已读取的参考图二进制列表，格式为 `(image_bytes, mime_type)`。 |
+| `reference_image_data` | 已读取的参考图二进制列表，推荐传入 `ImageData`；仍兼容旧格式 `(image_bytes, mime_type)`。 |
 | `presets` | 一个或多个预设名。字符串可用空格分隔多个名称。 |
 | `personas` | 一个或多个人设名。字符串可用空格分隔多个名称；人设参考图会在模型支持图生图时自动加入。 |
 | `is_admin` | 仅在传入 `unified_msg_origin` 时生效，用于管理员额度豁免判断。 |
@@ -83,7 +84,7 @@ async def submit_generation_task(
 - 当前适配器不支持图生图时，所有参考图会被忽略。
 - 创建的任务不会主动发送结果，结果路径写入任务快照的 `result_paths`。
 
-### 常见返回码
+### 返回码
 
 | `code` | `ok` | 说明 |
 | :--- | :---: | :--- |
@@ -233,7 +234,7 @@ async def generate_image_files(
     aspect_ratio: str | None = None,
     resolution: str | None = None,
     reference_image_sources: Any = None,
-    reference_image_data: list[tuple[bytes, str]] | None = None,
+    reference_image_data: list[ImageData | tuple[bytes, str]] | None = None,
     presets: str | list[str] | None = None,
     personas: str | list[str] | None = None,
     is_admin: bool = False,
@@ -250,6 +251,29 @@ async def generate_image_files(
 | :--- | :--- |
 | `timeout_seconds` | 等待任务完成的超时时间；提交失败时不会等待。 |
 | `poll_interval_seconds` | 等待任务完成时的轮询间隔。 |
+
+## 返回码总览
+
+这些返回码由 `core.public_api.PublicAPIResultCode` 定义，所有返回对象的 `code` 字段均使用下表中的字符串值。
+
+| `code` | 适用接口 | `ok` | 说明 |
+| :--- | :--- | :---: | :--- |
+| `accepted` | `submit_generation_task` | `True` | 任务已提交。 |
+| `generator_not_initialized` | `submit_generation_task`、`generate_image_files` | `False` | 生成器未初始化。 |
+| `api_key_missing` | `submit_generation_task`、`generate_image_files` | `False` | 当前适配器需要 API Key，但未配置。 |
+| `template_not_found` | `submit_generation_task`、`generate_image_files` | `False` | 指定预设或人设不存在。 |
+| `empty_prompt` | `submit_generation_task`、`generate_image_files` | `False` | 拼接预设、人设和额外提示词后仍为空。 |
+| `rate_limited` | `submit_generation_task`、`generate_image_files` | `False` | 命中黑名单、频率限制或每日额度限制。 |
+| `prompt_blocked` | `submit_generation_task`、`generate_image_files` | `False` | 提示词审核未通过。 |
+| `cancel_requested` | `cancel_generation_task` | `True` | 已请求取消任务，或任务已处于取消状态。 |
+| `cancel_failed` | `cancel_generation_task` | `False` | 任务不存在、任务已结束或会话作用域不匹配。 |
+| `not_found` | `wait_generation_result`、`generate_image_files` | `False` | 任务不存在或已被清理。 |
+| `timeout` | `wait_generation_result`、`generate_image_files` | `False` | 等待任务完成超时。 |
+| `succeeded` | `wait_generation_result`、`generate_image_files` | `True` | 任务成功并返回图片路径。 |
+| `no_result` | `wait_generation_result`、`generate_image_files` | `False` | 任务成功结束但没有图片路径。 |
+| `failed` | `wait_generation_result`、`generate_image_files` | `False` | 任务失败。 |
+| `cancelling` | `wait_generation_result`、`generate_image_files` | `False` | 任务处于取消中状态时结束。 |
+| `cancelled` | `wait_generation_result`、`generate_image_files` | `False` | 任务已取消。 |
 
 ### 示例：不计用户额度
 

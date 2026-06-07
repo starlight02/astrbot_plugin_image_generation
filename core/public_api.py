@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from typing import Any
 
 from astrbot.api import logger
@@ -17,15 +16,50 @@ from .reference_collector import (
     collect_reference_images_from_personas,
     deduplicate_reference_images,
     download_reference_images,
-    normalize_string_items,
 )
 from .task_manager import GenerationTaskRecord
+from .task_id import new_task_id
+from .template_utils import (
+    find_named_entry,
+    format_template_summary,
+    normalize_name_items,
+    parse_preset_prompt,
+)
 from .types import ImageCapability, ImageData
 
 
 LOG = log_prefix("PublicAPI")
 DEFAULT_SOURCE = "公共接口"
 DEFAULT_WAIT_POLL_INTERVAL_SECONDS = 0.5
+
+
+class PublicAPIResultCode(str, Enum):
+    """Stable result codes returned by the inter-plugin public API."""
+
+    ACCEPTED = "accepted"
+    GENERATOR_NOT_INITIALIZED = "generator_not_initialized"
+    API_KEY_MISSING = "api_key_missing"
+    TEMPLATE_NOT_FOUND = "template_not_found"
+    EMPTY_PROMPT = "empty_prompt"
+    RATE_LIMITED = "rate_limited"
+    PROMPT_BLOCKED = "prompt_blocked"
+    CANCEL_REQUESTED = "cancel_requested"
+    CANCEL_FAILED = "cancel_failed"
+    NOT_FOUND = "not_found"
+    TIMEOUT = "timeout"
+    SUCCEEDED = "succeeded"
+    NO_RESULT = "no_result"
+    FAILED = "failed"
+    CANCELLING = "cancelling"
+    CANCELLED = "cancelled"
+
+    @classmethod
+    def from_task_status(cls, status: str) -> "PublicAPIResultCode":
+        """Map task status values to public API result codes."""
+        try:
+            return cls(status)
+        except ValueError:
+            return cls.FAILED
 
 
 @dataclass(frozen=True)
@@ -109,21 +143,21 @@ class ImageGenerationPublicAPI:
         plugin = self._plugin
         if not plugin.generator or not plugin.generator.adapter:
             return self._submit_error(
-                "generator_not_initialized",
+                PublicAPIResultCode.GENERATOR_NOT_INITIALIZED,
                 "生图生成器未初始化",
             )
 
-        if (
-            not plugin.config_manager.adapter_config
-            or not plugin.config_manager.adapter_config.api_keys
-        ):
-            return self._submit_error("api_key_missing", "未配置 API Key，无法生成图片")
+        if not plugin.has_required_api_key():
+            return self._submit_error(
+                PublicAPIResultCode.API_KEY_MISSING,
+                "未配置 API Key，无法生成图片",
+            )
 
         request_source = str(source or DEFAULT_SOURCE).strip() or DEFAULT_SOURCE
         scope = str(unified_msg_origin or "").strip()
         use_usage_scope = bool(scope)
         safe_is_admin = bool(is_admin) if use_usage_scope else False
-        task_id = self._new_task_id(scope=scope, source=request_source)
+        task_id = self._new_task_id()
 
         requested_count = plugin.normalize_image_count(
             image_count
@@ -149,10 +183,13 @@ class ImageGenerationPublicAPI:
             resolution=str(final_resolution),
         )
         if parse_error:
-            return self._submit_error("template_not_found", parse_error)
+            return self._submit_error(
+                PublicAPIResultCode.TEMPLATE_NOT_FOUND,
+                parse_error,
+            )
         if not final_prompt:
             return self._submit_error(
-                "empty_prompt",
+                PublicAPIResultCode.EMPTY_PROMPT,
                 "请提供图片生成提示词、预设或人设",
             )
 
@@ -168,7 +205,10 @@ class ImageGenerationPublicAPI:
                     f"{LOG} 公共接口触发使用限制: {safe_log_text(check_result)} "
                     f"(用户: {mask_sensitive(scope)})"
                 )
-                return self._submit_error("rate_limited", check_result)
+                return self._submit_error(
+                    PublicAPIResultCode.RATE_LIMITED,
+                    check_result,
+                )
 
         prompt_allowed, prompt_reason = await plugin.safety_auditor.audit_prompt(
             final_prompt,
@@ -176,7 +216,7 @@ class ImageGenerationPublicAPI:
         )
         if not prompt_allowed:
             return self._submit_error(
-                "prompt_blocked",
+                PublicAPIResultCode.PROMPT_BLOCKED,
                 f"提示词审核未通过: {prompt_reason}",
                 error=prompt_reason,
             )
@@ -192,7 +232,10 @@ class ImageGenerationPublicAPI:
                     f"{LOG} 公共接口触发使用限制: {safe_log_text(check_result)} "
                     f"(用户: {mask_sensitive(scope)})"
                 )
-                return self._submit_error("rate_limited", check_result)
+                return self._submit_error(
+                    PublicAPIResultCode.RATE_LIMITED,
+                    check_result,
+                )
 
         references = await self._collect_reference_images(
             reference_image_sources=reference_image_sources,
@@ -224,7 +267,7 @@ class ImageGenerationPublicAPI:
         )
         return ImageGenerationSubmitResult(
             ok=True,
-            code="accepted",
+            code=PublicAPIResultCode.ACCEPTED.value,
             message="任务已提交",
             task_id=record.task_id,
         )
@@ -252,7 +295,11 @@ class ImageGenerationPublicAPI:
         )
         return ImageGenerationOperationResult(
             ok=ok,
-            code="cancel_requested" if ok else "cancel_failed",
+            code=(
+                PublicAPIResultCode.CANCEL_REQUESTED.value
+                if ok
+                else PublicAPIResultCode.CANCEL_FAILED.value
+            ),
             message=message,
             task_id=normalized_task_id,
             error="" if ok else message,
@@ -271,7 +318,7 @@ class ImageGenerationPublicAPI:
         if not record:
             return ImageGenerationResult(
                 ok=False,
-                code="not_found",
+                code=PublicAPIResultCode.NOT_FOUND.value,
                 message=f"任务不存在: {normalized_task_id}",
                 task_id=normalized_task_id,
                 paths=[],
@@ -287,7 +334,7 @@ class ImageGenerationPublicAPI:
             if deadline is not None and time.monotonic() >= deadline:
                 return ImageGenerationResult(
                     ok=False,
-                    code="timeout",
+                    code=PublicAPIResultCode.TIMEOUT.value,
                     message="等待任务完成超时",
                     task_id=normalized_task_id,
                     paths=[],
@@ -298,7 +345,7 @@ class ImageGenerationPublicAPI:
             if not record:
                 return ImageGenerationResult(
                     ok=False,
-                    code="not_found",
+                    code=PublicAPIResultCode.NOT_FOUND.value,
                     message=f"任务不存在: {normalized_task_id}",
                     task_id=normalized_task_id,
                     paths=[],
@@ -308,7 +355,7 @@ class ImageGenerationPublicAPI:
         if record.status.value == "succeeded" and record.result_paths:
             return ImageGenerationResult(
                 ok=True,
-                code="succeeded",
+                code=PublicAPIResultCode.SUCCEEDED.value,
                 message=record.message or "任务已完成",
                 task_id=normalized_task_id,
                 paths=list(record.result_paths),
@@ -316,7 +363,7 @@ class ImageGenerationPublicAPI:
         if record.status.value == "succeeded":
             return ImageGenerationResult(
                 ok=False,
-                code="no_result",
+                code=PublicAPIResultCode.NO_RESULT.value,
                 message="任务已完成但没有生成图片路径",
                 task_id=normalized_task_id,
                 paths=[],
@@ -324,7 +371,7 @@ class ImageGenerationPublicAPI:
             )
         return ImageGenerationResult(
             ok=False,
-            code=record.status.value,
+            code=PublicAPIResultCode.from_task_status(record.status.value).value,
             message=record.error or record.message or record.status_label,
             task_id=normalized_task_id,
             paths=list(record.result_paths),
@@ -379,14 +426,14 @@ class ImageGenerationPublicAPI:
 
     def _submit_error(
         self,
-        code: str,
+        code: PublicAPIResultCode,
         message: str,
         *,
         error: str = "",
     ) -> ImageGenerationSubmitResult:
         return ImageGenerationSubmitResult(
             ok=False,
-            code=code,
+            code=code.value,
             message=message,
             error=error or message,
         )
@@ -414,33 +461,14 @@ class ImageGenerationPublicAPI:
             duration_seconds=record.duration_seconds,
         )
 
-    def _new_task_id(self, *, scope: str, source: str) -> str:
-        digest = hashlib.md5(f"{time.time()}{scope}{source}".encode()).hexdigest()
-        return digest[:8]
+    def _new_task_id(self) -> str:
+        return new_task_id()
 
     def _normalize_name_items(self, raw: Any) -> list[str]:
-        names: list[str] = []
-        seen: set[str] = set()
-        for item in normalize_string_items(raw):
-            for name in item.split():
-                normalized = name.strip()
-                if not normalized:
-                    continue
-                lowered = normalized.lower()
-                if lowered in seen:
-                    continue
-                seen.add(lowered)
-                names.append(normalized)
-        return names
+        return normalize_name_items(raw)
 
     def _find_named_entry(self, entries: dict[str, Any], token: str) -> str | None:
-        if token in entries:
-            return token
-        lowered_token = token.lower()
-        for name in entries:
-            if name.lower() == lowered_token:
-                return name
-        return None
+        return find_named_entry(entries, token)
 
     def _parse_preset_prompt(
         self,
@@ -448,21 +476,7 @@ class ImageGenerationPublicAPI:
         aspect_ratio: str,
         resolution: str,
     ) -> tuple[str, str, str]:
-        preset_prompt = str(preset_content or "").strip()
-        if not preset_prompt.startswith("{"):
-            return preset_prompt, aspect_ratio, resolution
-
-        try:
-            preset_data = json.loads(preset_prompt)
-        except json.JSONDecodeError:
-            return preset_prompt, aspect_ratio, resolution
-        if not isinstance(preset_data, dict):
-            return preset_prompt, aspect_ratio, resolution
-
-        preset_prompt = str(preset_data.get("prompt", "") or "").strip()
-        aspect_ratio = str(preset_data.get("aspect_ratio") or aspect_ratio)
-        resolution = str(preset_data.get("resolution") or resolution)
-        return preset_prompt, aspect_ratio, resolution
+        return parse_preset_prompt(preset_content, aspect_ratio, resolution)
 
     def _build_prompt(
         self,
@@ -552,21 +566,7 @@ class ImageGenerationPublicAPI:
         matched_presets: list[str],
         matched_personas: list[str],
     ) -> tuple[str | None, str]:
-        if matched_presets and matched_personas:
-            return (
-                "；".join(
-                    (
-                        f"预设: {'、'.join(matched_presets)}",
-                        f"人设: {'、'.join(matched_personas)}",
-                    )
-                ),
-                "预设/人设",
-            )
-        if matched_presets:
-            return "、".join(matched_presets), "预设"
-        if matched_personas:
-            return "、".join(matched_personas), "人设"
-        return None, "预设"
+        return format_template_summary(matched_presets, matched_personas)
 
     async def _collect_reference_images(
         self,
