@@ -99,12 +99,16 @@ async def collect_reference_images_from_personas(
     *,
     task_id: str | None = None,
     log_context: str = "Reference",
+    workspace_dir: str | None = None,
 ) -> list[ImageData]:
     """Download all configured persona reference images."""
     images_data: list[ImageData] = []
     task_log = log_prefix(log_context, task_id) if task_id else LOG
     for persona_name, persona_image in persona_images:
-        if persona_image_data := await image_processor.download_image(persona_image):
+        if persona_image_data := await image_processor.download_image(
+            persona_image,
+            workspace_dir=workspace_dir,
+        ):
             images_data.append(persona_image_data)
         else:
             logger.warning(
@@ -120,12 +124,16 @@ async def download_reference_images(
     reference_label: str,
     task_id: str | None = None,
     log_context: str = "Reference",
+    workspace_dir: str | None = None,
 ) -> list[ImageData]:
     """Download explicit reference images from URLs or local file paths."""
     images_data: list[ImageData] = []
     task_log = log_prefix(log_context, task_id) if task_id else LOG
     for reference in normalize_string_items(references):
-        if image_data := await image_processor.download_image(reference):
+        if image_data := await image_processor.download_image(
+            reference,
+            workspace_dir=workspace_dir,
+        ):
             images_data.append(image_data)
         else:
             logger.warning(
@@ -142,11 +150,15 @@ async def collect_command_reference_images(
     task_id: str,
 ) -> list[ImageData]:
     """Collect command persona and message reference images."""
+    workspace_dir = image_processor.workspace_dir_for_origin(
+        getattr(event, "unified_msg_origin", None)
+    )
     images_data = await collect_reference_images_from_personas(
         image_processor,
         persona_images,
         task_id=task_id,
         log_context="Task",
+        workspace_dir=workspace_dir,
     )
     images_data.extend(await image_processor.fetch_images_from_event(event))
     return deduplicate_reference_images(
@@ -175,6 +187,9 @@ async def collect_tool_reference_images(
 
     images_data: list[ImageData] = []
     avatar_user_ids: set[str] = set()
+    workspace_dir = image_processor.workspace_dir_for_origin(
+        getattr(event, "unified_msg_origin", None)
+    )
 
     if persona_images:
         images_data.extend(
@@ -183,6 +198,7 @@ async def collect_tool_reference_images(
                 persona_images,
                 task_id=task_id,
                 log_context="LLMTool",
+                workspace_dir=workspace_dir,
             )
         )
 
@@ -193,6 +209,7 @@ async def collect_tool_reference_images(
             reference_label="显式",
             task_id=task_id,
             log_context="LLMTool",
+            workspace_dir=workspace_dir,
         )
     )
 

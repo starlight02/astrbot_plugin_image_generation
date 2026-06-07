@@ -74,9 +74,8 @@ class ImageGenerationPlugin(Star):
 
         # 数据目录配置：持久数据放插件数据目录，图片临时文件放 AstrBot 官方临时目录
         self.data_dir = StarTools.get_data_dir()
-        self.image_temp_dir = (
-            Path(get_astrbot_temp_path()) / "astrbot_plugin_image_generation"
-        )
+        self.astrbot_temp_dir = Path(get_astrbot_temp_path())
+        self.image_temp_dir = self.astrbot_temp_dir / "astrbot_plugin_image_generation"
         self.image_temp_dir.mkdir(parents=True, exist_ok=True)
 
         # 初始化配置管理器
@@ -92,6 +91,7 @@ class ImageGenerationPlugin(Star):
             str(self.image_temp_dir),
             self.config_manager.usage_settings.max_image_size_mb,
             str(self.data_dir),
+            allowed_local_base_dirs=[str(self.astrbot_temp_dir)],
         )
 
         # 初始化任务管理器

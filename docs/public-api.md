@@ -69,7 +69,7 @@ async def submit_generation_task(
 | `image_count` | 生成数量；不传使用插件默认值，超过插件配置上限会被截断。 |
 | `aspect_ratio` | 宽高比；不传使用插件默认值，如 `"1:1"`、`"16:9"`、`"不指定"`。 |
 | `resolution` | 分辨率；不传使用插件默认值，如 `"1K"`、`"2K"`、`"4K"`、`"不指定"`。 |
-| `reference_image_sources` | 参考图来源。支持字符串、列表、嵌套列表、包含 `url`/`path`/`file`/`name` 的字典；可为 HTTP(S) URL、本地绝对路径、`file://` URL 或插件数据目录下 `files/...` 路径。 |
+| `reference_image_sources` | 参考图来源。支持字符串、列表、嵌套列表、包含 `url`/`path`/`file`/`name` 的字典；可为 HTTP(S) URL、本地路径、`file://` URL 或插件数据目录下 `files/...` 路径。本地路径仅允许当前会话 workspace、AstrBot temp 目录和本插件数据目录，并会校验真实图片类型。 |
 | `reference_image_data` | 已读取的参考图二进制列表，格式为 `(image_bytes, mime_type)`。 |
 | `presets` | 一个或多个预设名。字符串可用空格分隔多个名称。 |
 | `personas` | 一个或多个人设名。字符串可用空格分隔多个名称；人设参考图会在模型支持图生图时自动加入。 |

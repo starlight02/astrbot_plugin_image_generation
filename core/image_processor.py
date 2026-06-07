@@ -8,12 +8,17 @@ import hashlib
 import ntpath
 import os
 import posixpath
+import re
+from collections.abc import Iterable
+from io import BytesIO
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlparse
 
 import astrbot.api.message_components as Comp
 from astrbot.api import logger
+from astrbot.core.utils.astrbot_path import get_astrbot_workspaces_path
 from astrbot.core.utils.io import download_image_by_url
+from PIL import Image, UnidentifiedImageError
 
 from .logging_utils import log_prefix, mask_sensitive, safe_log_url
 from .types import ImageData
@@ -23,6 +28,24 @@ if TYPE_CHECKING:
 
 
 LOG = log_prefix("ImageProcessor")
+ALLOWED_IMAGE_MIME_TYPES = frozenset(
+    {
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "image/heic",
+        "image/heif",
+    }
+)
+PIL_VERIFIABLE_IMAGE_MIME_TYPES = frozenset(
+    {
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+    }
+)
 
 
 class ImageProcessor:
@@ -33,12 +56,20 @@ class ImageProcessor:
         temp_dir: str,
         max_image_size_mb: int,
         local_base_dir: str | None = None,
+        allowed_local_base_dirs: Iterable[str | os.PathLike[str] | None] | None = None,
     ) -> None:
-        self._temp_dir = temp_dir
+        self._temp_dir = os.path.realpath(temp_dir)
         self._max_image_size_mb = max_image_size_mb
         self._local_base_dir = (
             os.path.realpath(local_base_dir) if local_base_dir else ""
         )
+        base_dirs: list[str | os.PathLike[str] | None] = [
+            self._local_base_dir,
+            self._temp_dir,
+        ]
+        if allowed_local_base_dirs:
+            base_dirs.extend(allowed_local_base_dirs)
+        self._allowed_local_base_dirs = self._normalize_allowed_base_dirs(base_dirs)
         self._ensure_temp_dir()
 
     def _ensure_temp_dir(self) -> None:
@@ -55,26 +86,97 @@ class ImageProcessor:
         """获取临时目录路径。"""
         return self._temp_dir
 
-    def _resolve_local_path(self, value: str) -> str | None:
-        """Resolve an absolute local path, file:// URI, or plugin file path."""
+    def workspace_dir_for_origin(self, unified_msg_origin: str | None) -> str | None:
+        """Return the AstrBot local workspace path for a session origin."""
+        origin = str(unified_msg_origin or "").strip()
+        if not origin:
+            return None
+        normalized_origin = re.sub(r"[^A-Za-z0-9._-]+", "_", origin)
+        normalized_origin = normalized_origin or "unknown"
+        return os.path.realpath(
+            os.path.join(get_astrbot_workspaces_path(), normalized_origin)
+        )
+
+    def _normalize_allowed_base_dirs(
+        self,
+        paths: Iterable[str | os.PathLike[str] | None],
+    ) -> tuple[str, ...]:
+        """Normalize and deduplicate allowed local directory roots."""
+        result: list[str] = []
+        seen: set[str] = set()
+        for raw_path in paths:
+            if not raw_path:
+                continue
+            path = os.path.realpath(os.fspath(raw_path))
+            normalized = os.path.normcase(path)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            result.append(path)
+        return tuple(result)
+
+    def _allowed_base_dirs_for(self, workspace_dir: str | None) -> tuple[str, ...]:
+        """Return base dirs for one local file lookup."""
+        if not workspace_dir:
+            return self._allowed_local_base_dirs
+        return self._normalize_allowed_base_dirs(
+            (*self._allowed_local_base_dirs, workspace_dir)
+        )
+
+    def _is_path_within_allowed_dirs(
+        self,
+        path: str,
+        allowed_base_dirs: tuple[str, ...],
+    ) -> bool:
+        """Return whether path is inside one of the configured safe roots."""
+        normalized_path = os.path.normcase(os.path.realpath(path))
+        for base_dir in allowed_base_dirs:
+            normalized_base = os.path.normcase(os.path.realpath(base_dir))
+            try:
+                if (
+                    os.path.commonpath([normalized_base, normalized_path])
+                    == normalized_base
+                ):
+                    return True
+            except ValueError:
+                continue
+        return False
+
+    def _resolve_local_path(
+        self,
+        value: str,
+        *,
+        workspace_dir: str | None = None,
+    ) -> str | None:
+        """Resolve a safe local image path inside workspace/temp/plugin data dirs."""
         value = self._normalize_local_path_value(value)
-        candidates = []
+        if not value:
+            return None
+
+        parsed = urlparse(value)
+        if (
+            parsed.scheme
+            and parsed.scheme.lower() != "file"
+            and not self._is_absolute_path(value)
+        ):
+            return None
+
+        allowed_base_dirs = self._allowed_base_dirs_for(workspace_dir)
+        candidates: list[str] = []
         if self._is_absolute_path(value):
             candidates.append(value)
         elif self._local_base_dir and value.replace("\\", "/").startswith("files/"):
-            candidate = os.path.realpath(os.path.join(self._local_base_dir, value))
-            try:
-                if (
-                    os.path.commonpath([self._local_base_dir, candidate])
-                    != self._local_base_dir
-                ):
-                    return None
-            except ValueError:
-                return None
-            candidates.append(candidate)
+            candidates.append(os.path.join(self._local_base_dir, value))
+        elif workspace_dir:
+            candidates.append(os.path.join(workspace_dir, value))
 
         for candidate in candidates:
             path = os.path.realpath(candidate)
+            if not self._is_path_within_allowed_dirs(path, allowed_base_dirs):
+                logger.warning(
+                    f"{LOG} 本地参考图路径不在允许目录内: {safe_log_url(path)}"
+                )
+                continue
             if os.path.exists(path) and os.path.isfile(path):
                 return path
             logger.warning(f"{LOG} 本地参考图不存在或不是文件: {safe_log_url(path)}")
@@ -111,7 +213,12 @@ class ImageProcessor:
             path = path[1:]
         return os.path.normpath(path)
 
-    async def download_image(self, url: str) -> ImageData | None:
+    async def download_image(
+        self,
+        url: str,
+        *,
+        workspace_dir: str | None = None,
+    ) -> ImageData | None:
         """下载或读取图片并返回图像数据、MIME 类型和可选来源 URL。"""
         try:
             url = url.strip()
@@ -120,7 +227,7 @@ class ImageProcessor:
 
             data: bytes | None = None
             source_url = url if self._is_network_url(url) else None
-            if local_path := self._resolve_local_path(url):
+            if local_path := self._resolve_local_path(url, workspace_dir=workspace_dir):
                 source_url = None
                 with open(local_path, "rb") as f:
                     data = f.read()
@@ -143,21 +250,61 @@ class ImageProcessor:
                 logger.warning(f"{LOG} 图片超过大小限制 ({self._max_image_size_mb}MB)")
                 return None
 
-            mime = self._detect_mime_type(data)
-            return ImageData(data=data, mime_type=mime, source_url=source_url)
+            return self.validate_image_data(
+                data,
+                source_url=source_url,
+                log_source=url,
+            )
         except Exception as exc:
             logger.error(f"{LOG} 获取图片失败: {safe_log_url(url)} ({exc})")
         return None
+
+    def validate_image_data(
+        self,
+        data: bytes,
+        *,
+        source_url: str | None = None,
+        log_source: str | None = None,
+    ) -> ImageData | None:
+        """Validate bytes as a supported image and return normalized image data."""
+        mime = self._detect_mime_type(data)
+        if not self._is_valid_image_data(data, mime):
+            logger.warning(
+                f"{LOG} 参考图文件类型不支持或内容不是有效图片: {safe_log_url(log_source or source_url or '<bytes>')}"
+            )
+            return None
+        return ImageData(data=data, mime_type=mime, source_url=source_url)
 
     def _detect_mime_type(self, data: bytes) -> str:
         """检测图片 MIME 类型。"""
         if data.startswith(b"\xff\xd8"):
             return "image/jpeg"
-        elif data.startswith(b"GIF"):
+        elif data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        elif data.startswith((b"GIF87a", b"GIF89a")):
             return "image/gif"
-        elif data.startswith(b"RIFF") and b"WEBP" in data[:16]:
+        elif data.startswith(b"RIFF") and data[8:12] == b"WEBP":
             return "image/webp"
-        return "image/png"
+        elif len(data) > 12 and data[4:8] == b"ftyp":
+            brand = data[8:12]
+            if brand in (b"heic", b"heix", b"heim", b"heis"):
+                return "image/heic"
+            if brand in (b"mif1", b"msf1", b"heif"):
+                return "image/heif"
+        return "application/octet-stream"
+
+    def _is_valid_image_data(self, data: bytes, mime: str) -> bool:
+        """Return whether bytes are a supported, real image payload."""
+        if mime not in ALLOWED_IMAGE_MIME_TYPES:
+            return False
+        if mime not in PIL_VERIFIABLE_IMAGE_MIME_TYPES:
+            return True
+        try:
+            with Image.open(BytesIO(data)) as image:
+                image.verify()
+        except (UnidentifiedImageError, OSError, ValueError):
+            return False
+        return True
 
     async def get_avatar(self, user_id: str) -> bytes | None:
         """获取用户头像。"""
@@ -168,7 +315,9 @@ class ImageProcessor:
             path = await download_image_by_url(url, path=path)
             if path:
                 with open(path, "rb") as f:
-                    return f.read()
+                    data = f.read()
+                if self.validate_image_data(data, log_source=url):
+                    return data
         except Exception as e:
             logger.debug(f"{LOG} 获取头像失败 (user_id={mask_sensitive(user_id)}): {e}")
         return None
@@ -227,6 +376,9 @@ class ImageProcessor:
         if not event.message_obj or not event.message_obj.message:
             return images_data
 
+        workspace_dir = self.workspace_dir_for_origin(
+            getattr(event, "unified_msg_origin", None)
+        )
         bot_self_id = str(event.get_self_id()) if hasattr(event, "get_self_id") else ""
         should_skip_leading_bot_at = self._should_skip_leading_bot_at(
             event,
@@ -239,7 +391,12 @@ class ImageProcessor:
                 if isinstance(component, Comp.Image):
                     # 处理直接发送的图片
                     url = component.url or component.file
-                    if url and (data := await self.download_image(url)):
+                    if url and (
+                        data := await self.download_image(
+                            url,
+                            workspace_dir=workspace_dir,
+                        )
+                    ):
                         images_data.append(data)
                 elif isinstance(component, Comp.Reply):
                     # 处理引用消息中的图片
@@ -247,7 +404,12 @@ class ImageProcessor:
                         for sub_comp in component.chain:
                             if isinstance(sub_comp, Comp.Image):
                                 url = sub_comp.url or sub_comp.file
-                                if url and (data := await self.download_image(url)):
+                                if url and (
+                                    data := await self.download_image(
+                                        url,
+                                        workspace_dir=workspace_dir,
+                                    )
+                                ):
                                     images_data.append(data)
                 elif isinstance(component, Comp.At):
                     # 处理 @ 用户的头像

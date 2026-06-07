@@ -199,6 +199,7 @@ class ImageGenerationPublicAPI:
             reference_image_data=reference_image_data,
             persona_images=persona_images,
             task_id=task_id,
+            unified_msg_origin=scope,
         )
 
         preset_summary, preset_label = self._format_template_summary(
@@ -574,6 +575,7 @@ class ImageGenerationPublicAPI:
         reference_image_data: list[ImageData] | None,
         persona_images: list[tuple[str, str]],
         task_id: str,
+        unified_msg_origin: str | None = None,
     ) -> list[ImageData]:
         plugin = self._plugin
         if not plugin.generator or not plugin.generator.adapter:
@@ -590,6 +592,9 @@ class ImageGenerationPublicAPI:
             return []
 
         images_data: list[ImageData] = []
+        workspace_dir = plugin.image_processor.workspace_dir_for_origin(
+            unified_msg_origin
+        )
         if persona_images:
             images_data.extend(
                 await collect_reference_images_from_personas(
@@ -597,6 +602,7 @@ class ImageGenerationPublicAPI:
                     persona_images,
                     task_id=task_id,
                     log_context="PublicAPI",
+                    workspace_dir=workspace_dir,
                 )
             )
         images_data.extend(
@@ -606,6 +612,7 @@ class ImageGenerationPublicAPI:
                 reference_label="公共接口",
                 task_id=task_id,
                 log_context="PublicAPI",
+                workspace_dir=workspace_dir,
             )
         )
         images_data.extend(self._normalize_reference_image_data(reference_image_data))
@@ -622,11 +629,16 @@ class ImageGenerationPublicAPI:
         images_data: list[ImageData] = []
         max_size = self._plugin.config_manager.usage_settings.max_image_size_mb
         for item in reference_image_data or []:
-            try:
-                data, mime = item
-            except (TypeError, ValueError):
-                logger.warning(f"{LOG} 已忽略格式错误的二进制参考图")
-                continue
+            source_url = None
+            if isinstance(item, ImageData):
+                data = item.data
+                source_url = item.source_url
+            else:
+                try:
+                    data, _mime = item
+                except (TypeError, ValueError):
+                    logger.warning(f"{LOG} 已忽略格式错误的二进制参考图")
+                    continue
             if isinstance(data, bytearray):
                 data = bytes(data)
             if not isinstance(data, bytes) or not data:
@@ -635,5 +647,11 @@ class ImageGenerationPublicAPI:
             if len(data) > max_size * 1024 * 1024:
                 logger.warning(f"{LOG} 已忽略超过大小限制的二进制参考图 ({max_size}MB)")
                 continue
-            images_data.append(ImageData(data=data, mime_type=str(mime or "image/png")))
+            image_data = self._plugin.image_processor.validate_image_data(
+                data,
+                source_url=source_url,
+                log_source=source_url or "公共接口二进制参考图",
+            )
+            if image_data:
+                images_data.append(image_data)
         return images_data
