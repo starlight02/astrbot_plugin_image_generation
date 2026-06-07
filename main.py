@@ -277,22 +277,6 @@ class ImageGenerationPlugin(Star):
             self.config_manager.max_concurrent_tasks
         )
 
-    def _cleanup_generated_images(
-        self,
-        task_id: str,
-        image_paths: list[str],
-        *,
-        reason: str,
-    ) -> None:
-        """Cleanup generated temp images that will not be delivered."""
-        if not image_paths or not self.config_manager.cleanup_failed_task_images:
-            return
-        removed = self.image_processor.delete_generated_images(image_paths)
-        if removed:
-            logger.debug(
-                f"{log_prefix('Task', task_id)} 已清理 {removed} 张临时生成图片，原因={safe_log_text(reason)}"
-            )
-
     def create_generation_task(
         self,
         *,
@@ -741,29 +725,11 @@ class ImageGenerationPlugin(Star):
         )
 
         # 生图后图片审核
-        try:
-            (
-                image_allowed,
-                image_reason,
-            ) = await self.safety_auditor.audit_generated_images(
-                prompt=prompt,
-                image_paths=generated_file_paths,
-                unified_msg_origin=unified_msg_origin,
-            )
-        except asyncio.CancelledError:
-            self._cleanup_generated_images(
-                task_id,
-                generated_file_paths,
-                reason="任务取消",
-            )
-            raise
-        except Exception:
-            self._cleanup_generated_images(
-                task_id,
-                generated_file_paths,
-                reason="图片内容审核异常",
-            )
-            raise
+        image_allowed, image_reason = await self.safety_auditor.audit_generated_images(
+            prompt=prompt,
+            image_paths=generated_file_paths,
+            unified_msg_origin=unified_msg_origin,
+        )
         if not image_allowed:
             # 生成已消耗模型调用成本，即使审核失败也计入实际生成额度。
             if unified_msg_origin:
@@ -773,11 +739,6 @@ class ImageGenerationPlugin(Star):
                     reserved_count=image_count,
                     actual_count=len(generated_file_paths),
                 )
-            self._cleanup_generated_images(
-                task_id,
-                generated_file_paths,
-                reason="图片内容审核未通过",
-            )
             self.task_manager.mark_generation_task_failed(
                 task_id,
                 f"图片内容审核未通过: {image_reason}",
@@ -829,11 +790,6 @@ class ImageGenerationPlugin(Star):
                 info_message=info_message,
             )
         except asyncio.CancelledError:
-            self._cleanup_generated_images(
-                task_id,
-                generated_file_paths,
-                reason="任务取消",
-            )
             raise
         if send_errors:
             delivery_message = (
@@ -932,9 +888,7 @@ class ImageGenerationPlugin(Star):
                         task_id=task_id,
                         batch_index=current_index,
                         batch_count=image_count,
-                        retry_status_callback=lambda retry_attempt,
-                        max_retry_attempts,
-                        current_index=current_index: (
+                        retry_status_callback=lambda retry_attempt, max_retry_attempts, current_index=current_index: (
                             self.task_manager.update_generation_task_retry_status(
                                 task_id,
                                 current_index=current_index,
@@ -1046,13 +1000,6 @@ class ImageGenerationPlugin(Star):
 
                     if next_index <= image_count:
                         await schedule_next_request()
-        except asyncio.CancelledError:
-            self._cleanup_generated_images(
-                task_id,
-                generated_file_paths,
-                reason="任务取消",
-            )
-            raise
         finally:
             for pending_task in pending_tasks:
                 pending_task.cancel()

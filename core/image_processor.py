@@ -456,24 +456,3 @@ class ImageProcessor:
         except Exception as exc:
             logger.error(f"{LOG} 保存图片失败: {exc}", exc_info=True)
             return None
-
-    def delete_generated_images(self, image_paths: list[str]) -> int:
-        """Delete generated images inside the plugin temp directory."""
-        removed = 0
-        allowed_dirs = (self._temp_dir,)
-        for image_path in image_paths:
-            try:
-                path = os.path.realpath(image_path)
-                if not self._is_path_within_allowed_dirs(path, allowed_dirs):
-                    logger.warning(
-                        f"{LOG} 跳过非临时目录生成图片清理: {safe_log_url(path)}"
-                    )
-                    continue
-                if os.path.exists(path) and os.path.isfile(path):
-                    os.remove(path)
-                    removed += 1
-            except Exception as exc:
-                logger.warning(
-                    f"{LOG} 删除生成图片失败: {safe_log_url(image_path)} ({exc})"
-                )
-        return removed

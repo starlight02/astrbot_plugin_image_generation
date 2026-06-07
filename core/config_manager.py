@@ -15,7 +15,6 @@ from .constants import (
     ALL_RESULT_INFO_ITEMS,
     DEFAULT_ASPECT_RATIO,
     DEFAULT_AUDIT_MAX_RETRY_ATTEMPTS,
-    DEFAULT_CLEANUP_FAILED_TASK_IMAGES,
     DEFAULT_DAILY_LIMIT_COUNT,
     DEFAULT_GENERATION_IMAGE_COUNT,
     DEFAULT_IMAGE_AUDIT_PROMPT,
@@ -114,7 +113,6 @@ class GenerationSettings:
     default_image_count: int = DEFAULT_GENERATION_IMAGE_COUNT
     max_image_count: int = DEFAULT_MAX_GENERATION_IMAGE_COUNT
     max_images_per_message: int = DEFAULT_MAX_IMAGES_PER_MESSAGE
-    cleanup_failed_task_images: bool = DEFAULT_CLEANUP_FAILED_TASK_IMAGES
     max_concurrent_tasks: int = DEFAULT_MAX_CONCURRENT_TASKS
     non_retryable_status_codes: list[int] = field(
         default_factory=lambda: list(DEFAULT_NON_RETRYABLE_STATUS_CODES)
@@ -286,11 +284,6 @@ class ConfigManager:
                 "max_images_per_message",
                 DEFAULT_MAX_IMAGES_PER_MESSAGE,
                 min_value=1,
-            ),
-            cleanup_failed_task_images=self._get_bool(
-                cfg,
-                "cleanup_failed_task_images",
-                DEFAULT_CLEANUP_FAILED_TASK_IMAGES,
             ),
             max_concurrent_tasks=self._get_int(
                 cfg,
@@ -850,11 +843,6 @@ class ConfigManager:
     def max_images_per_message(self) -> int:
         """单条消息最多发送的图片数量。"""
         return self._plugin_config.generation_settings.max_images_per_message
-
-    @property
-    def cleanup_failed_task_images(self) -> bool:
-        """Return whether failed tasks should delete temporary generated images."""
-        return self._plugin_config.generation_settings.cleanup_failed_task_images
 
     @property
     def max_concurrent_tasks(self) -> int:

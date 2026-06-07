@@ -1166,12 +1166,6 @@
         },
         "default": 5
       },
-      "cleanup_failed_task_images": {
-        "description": "清理失败任务临时图片",
-        "hint": "开启后，任务被取消、生成后审核不通过或异常失败时，会删除已保存但不会发送给用户的临时生成图片。成功生成并交付的图片不会被清理。",
-        "type": "bool",
-        "default": false
-      },
       "default_aspect_ratio": {
         "description": "默认宽高比",
         "hint": "命令生图时默认使用的宽高比；选择“不指定”时请求中不携带比例字段。",
