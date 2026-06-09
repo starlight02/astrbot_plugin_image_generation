@@ -650,7 +650,7 @@
       },
       "agnes_ai": {
         "name": "Agnes AI 接口",
-        "hint": "调用 Agnes AI 图像生成接口，支持文生图和通过 extra_body.image 的图生图；宽高比会在插件内映射为官方 size 字段，不会发送 aspect_ratio 字段。",
+        "hint": "Agnes AI 图像生成接口。",
         "display_item": "name",
         "hide_hint_in_list": true,
         "items": {
@@ -687,9 +687,19 @@
               "agnes-image-2.1-flash"
             ]
           },
+          "response_format": {
+            "description": "响应格式",
+            "hint": "base64 直接返回图片；url 返回远端链接。",
+            "type": "string",
+            "default": "base64",
+            "options": [
+              "base64",
+              "url"
+            ]
+          },
           "capability_options": {
             "description": "模型能力",
-            "hint": "按当前模型实际能力勾选；Agnes 的“宽高比”仅表示插件会映射为官方 size 字段，不会发送 aspect_ratio 字段。",
+            "hint": "按模型能力勾选；比例映射为 size，不发 aspect_ratio。",
             "type": "list",
             "options": [
               "文生图",
@@ -722,17 +732,6 @@
             "slider": {
               "min": 0,
               "max": 10,
-              "step": 1
-            },
-            "default": 0
-          },
-          "seed": {
-            "description": "随机种子",
-            "hint": "可选；Agnes Image 2.0 Flash 支持。填 0 表示不发送 seed。",
-            "type": "int",
-            "slider": {
-              "min": 0,
-              "max": 2147483647,
               "step": 1
             },
             "default": 0
@@ -1086,6 +1085,12 @@
           "step": 1
         },
         "default": 3
+      },
+      "debug_request_logging": {
+        "description": "打印debug请求日志",
+        "hint": "开启后 debug 打印 JSON 请求/响应结构，长字符串会摘要。",
+        "type": "bool",
+        "default": false
       },
       "non_retryable_status_codes": {
         "description": "不可重试 HTTP 状态码",

@@ -64,6 +64,7 @@ class AgnesAIAdapter(BaseImageAdapter):
             f"{prefix} 请求 URL: {safe_log_url(url)}, Payload 字段: {list(payload.keys())}, "
             f"参考图={image_count}张"
         )
+        self._log_debug_json("请求", payload, request.task_id)
 
         try:
             async with self._get_session().post(
@@ -76,12 +77,13 @@ class AgnesAIAdapter(BaseImageAdapter):
                 duration = time.time() - start_time
                 if resp.status != 200:
                     error_text = await resp.text()
+                    self._log_debug_json_text("响应", error_text, request.task_id)
                     logger.error(
                         f"{prefix} API 错误 ({resp.status}, 耗时: {duration:.2f}s): {safe_log_error_body(error_text)}"
                     )
                     return None, f"API 错误 ({resp.status})"
 
-                data = await resp.json()
+                data = await self._read_response_json(resp, request.task_id)
                 logger.debug(f"{prefix} 生成成功 (耗时: {duration:.2f}s)")
                 return await self._extract_images(data, request.task_id)
         except Exception as e:  # noqa: BLE001
@@ -107,15 +109,20 @@ class AgnesAIAdapter(BaseImageAdapter):
         }
         if size := self._resolve_size(request):
             payload["size"] = size
-        if seed := self._resolve_seed():
-            payload["seed"] = seed
 
-        extra_body: dict[str, Any] = {"response_format": "url"}
+        response_format = self._response_format()
+        extra_body: dict[str, Any] = {}
+        if response_format == "url":
+            extra_body["response_format"] = "url"
+        elif request.images:
+            extra_body["response_format"] = "b64_json"
+        else:
+            payload["return_base64"] = True
+
         if request.images:
-            if self._needs_img2img_tag():
-                payload["tags"] = ["img2img"]
             extra_body["image"] = self._build_image_refs(request.images)
-        payload["extra_body"] = extra_body
+        if extra_body:
+            payload["extra_body"] = extra_body
 
         return payload
 
@@ -123,23 +130,13 @@ class AgnesAIAdapter(BaseImageAdapter):
         """获取当前模型名称。"""
         return self.model or self.DEFAULT_MODEL
 
-    def _needs_img2img_tag(self) -> bool:
-        """Agnes Image 2.0 Flash 的图生图请求需要显式 img2img 标签。"""
-        model_name = self._model_name().lower()
-        return "agnes-image-2.0-flash" in model_name
-
-    def _resolve_seed(self) -> int | None:
-        """解析可选随机种子；填 0 或留空表示不发送。"""
-        if not self._needs_img2img_tag():
-            return None
-        value = self.config.extra.get("seed")
-        if value in (None, "") or isinstance(value, bool):
-            return None
-        try:
-            seed = int(value)
-        except (TypeError, ValueError):
-            return None
-        return seed if seed > 0 else None
+    def _response_format(self) -> str:
+        """解析 Agnes 响应格式配置。"""
+        value = str(self.config.extra.get("response_format") or "base64")
+        normalized = value.strip().lower()
+        if normalized == "url":
+            return "url"
+        return "base64"
 
     def _resolve_size(self, request: GenerationRequest) -> str | None:
         """按宽高比和分辨率解析 Agnes AI size 参数。"""

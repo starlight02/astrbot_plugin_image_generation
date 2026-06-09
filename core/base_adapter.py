@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import abc
 import asyncio
+import hashlib
+import json
 import re
+from typing import Any
 
 import aiohttp
 
@@ -14,6 +17,10 @@ from .types import AdapterConfig, GenerationRequest, GenerationResult, ImageCapa
 
 
 API_STATUS_ERROR_PATTERN = re.compile(r"API 错误\s*\((\d{3})\)")
+DEBUG_JSON_STRING_LIMIT = 1000
+DEBUG_JSON_EDGE_CHARS = 120
+DEBUG_JSON_LIST_LIMIT = 50
+BASE64_VALUE_RE = re.compile(r"^[A-Za-z0-9+/=\s]+$")
 
 
 class BaseImageAdapter(abc.ABC):
@@ -31,6 +38,7 @@ class BaseImageAdapter(abc.ABC):
         self.timeout = config.timeout
         self.download_timeout = DEFAULT_DOWNLOAD_TIMEOUT
         self.max_retry_attempts = max(1, config.max_retry_attempts)
+        self.debug_request_logging = config.debug_request_logging
         self.non_retryable_status_codes = set(config.non_retryable_status_codes)
         self.non_retryable_error_keywords = [
             keyword.lower()
@@ -94,6 +102,77 @@ class BaseImageAdapter(abc.ABC):
     def _get_download_timeout(self) -> aiohttp.ClientTimeout:
         """获取统一的下载超时配置。"""
         return aiohttp.ClientTimeout(total=self.download_timeout)
+
+    def _log_debug_json(
+        self, label: str, value: Any, task_id: str | None = None
+    ) -> None:
+        """按需输出 JSON 调试日志，长字符串会摘要避免刷屏。"""
+        if not self.debug_request_logging:
+            return
+
+        prefix = self._get_log_prefix(task_id)
+        safe_value = self._sanitize_debug_json(value)
+        json_text = json.dumps(
+            safe_value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        )
+        logger.debug(f"{prefix} {label} JSON: {json_text}")
+
+    def _sanitize_debug_json(self, value: Any) -> Any:
+        """保留 JSON 结构，同时截断图片 Base64 和其他超长字符串。"""
+        if isinstance(value, dict):
+            return {key: self._sanitize_debug_json(item) for key, item in value.items()}
+        if isinstance(value, list):
+            items = [
+                self._sanitize_debug_json(item)
+                for item in value[:DEBUG_JSON_LIST_LIMIT]
+            ]
+            if len(value) > DEBUG_JSON_LIST_LIMIT:
+                omitted_count = len(value) - DEBUG_JSON_LIST_LIMIT
+                items.append(f"<list truncated: {omitted_count} items omitted>")
+            return items
+        if isinstance(value, str):
+            return self._sanitize_debug_string(value)
+        return value
+
+    def _sanitize_debug_string(self, value: str) -> str:
+        """截断调试 JSON 中可能撑爆日志的字符串值。"""
+        if len(value) <= DEBUG_JSON_STRING_LIMIT:
+            return value
+
+        digest = hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()[:12]
+        if value.startswith("data:"):
+            media_type = value.split(",", 1)[0]
+            return f"<data-url omitted: {media_type}, len={len(value)}, sha256={digest}>"
+        if BASE64_VALUE_RE.fullmatch(value):
+            return f"<base64 omitted: len={len(value)}, sha256={digest}>"
+
+        head = value[:DEBUG_JSON_EDGE_CHARS]
+        tail = value[-DEBUG_JSON_EDGE_CHARS:]
+        return f"{head}<string truncated: len={len(value)}, sha256={digest}>{tail}"
+
+    def _log_debug_json_text(
+        self, label: str, value: str, task_id: str | None = None
+    ) -> None:
+        """当文本响应可解析为 JSON 时按需输出 JSON 调试日志。"""
+        if not self.debug_request_logging:
+            return
+
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return
+        self._log_debug_json(label, parsed, task_id)
+
+    async def _read_response_json(
+        self, response: aiohttp.ClientResponse, task_id: str | None = None
+    ) -> Any:
+        """读取响应 JSON，并在开关开启时输出安全摘要后的响应体。"""
+        data = await response.json()
+        self._log_debug_json("响应", data, task_id)
+        return data
 
     def _rotate_api_key(self) -> None:
         """轮换 API Key。"""

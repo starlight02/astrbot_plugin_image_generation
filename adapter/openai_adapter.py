@@ -68,7 +68,9 @@ class OpenAIAdapter(BaseImageAdapter):
         else:
             url = f"{base}/v1/images/generations"
             headers["Content-Type"] = "application/json"
-            kwargs = {"json": self._build_payload(request)}
+            payload = self._build_payload(request)
+            kwargs = {"json": payload}
+            self._log_debug_json("请求", payload, request.task_id)
 
         try:
             async with session.post(
@@ -81,11 +83,12 @@ class OpenAIAdapter(BaseImageAdapter):
                 duration = time.time() - start_time
                 if resp.status != 200:
                     error_text = await resp.text()
+                    self._log_debug_json_text("响应", error_text, request.task_id)
                     logger.error(
                         f"{prefix} API 错误 ({resp.status}, 耗时: {duration:.2f}s): {safe_log_error_body(error_text)}"
                     )
                     return None, f"API 错误 ({resp.status})"
-                data = await resp.json()
+                data = await self._read_response_json(resp, request.task_id)
                 logger.debug(f"{prefix} 生成成功 (耗时: {duration:.2f}s)")
                 return await self._extract_images(data)
         except Exception as e:

@@ -35,19 +35,18 @@
 
 ## 适配器
 
-| 适配器类型            | 使用接口类型                                                   | 文生图 | 图生图 | 尺寸控制 | 说明                                                                                                                                                                                                          |
-| :-------------------- | :------------------------------------------------------------- | :----: | :----: | :------: | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `gemini`              | Gemini 原生 `generateContent`                                  |   ✅    |   ✅    |    ✅     | Gemini 原生图像生成接口。                                                                                                                                                                                     |
-| `openai_chat`         | OpenAI 兼容 `chat/completions`                                 |   ✅    |   ✅    |    ❌     | 通用 Chat Completions 图像生成接口，可配置 `modalities`、提示词前缀和额外请求体。                                                                                                                             |
-| `openai`              | OpenAI Images API `/v1/images/generations`、`/v1/images/edits` |   ✅    |   ✅    |    ✅     | DALL-E / GPT Image 系列；图生图仅 GPT Image 系列支持。                                                                                                                                                        |
-| `volcengine_ark`      | 火山方舟 Images Generations `/api/v3/images/generations`       |   ✅    |   ✅    |    ✅     | Seedream 系列，支持单图和组图；参考图使用 `image` 字段。                                                                                                                                                      |
-| `gitee_ai`            | Gitee AI `/v1/images/generations`、`/v1/images/edits`          |   ✅    |   ✅    |    ✅     | Gitee AI 通用图像接口                                                                                                                                                                                         |
-| `jimeng2api`          | jimeng-api `/v1/images/generations`、`/v1/images/compositions` |   ✅    |   ✅    |    ✅     | 适用于 [iptag/jimeng-api](https://github.com/iptag/jimeng-api)。                                                                                                                                              |
-| `grok`                | xAI Images API `/v1/images/generations`、`/v1/images/edits`    |   ✅    |   ✅    |    ✅     | Grok / xAI 图像生成接口。                                                                                                                                                                                     |
-| `siliconflow_adapter` | SiliconFlow Images API `/v1/images/generations`                |   ✅    |   ✅    |    ✅     | 支持 Kolors、Qwen-Image、Qwen-Image-Edit、Z-Image；多参考图映射到 `image`、`image2`、`image3`。                                                                                                               |
-| `agnes_ai`            | Agnes AI Images API `/v1/images/generations`                   |   ✅    |   ✅    |    ✅     | 支持 `agnes-image-2.0-flash` 和 `agnes-image-2.1-flash`；宽高比会在插件内映射为官方 `size` 字段，不会发送 `aspect_ratio` 字段；2.0 图生图会自动附加 `tags: ["img2img"]`，参考图通过 `extra_body.image` 发送。 |
-| `custom_http`         | 用户自定义 HTTP JSON 接口                                      |   ✅    |   ✅    |    ✅     | 高级接口模板，详见 [自定义 HTTP 接口配置](docs/custom-http.md)。                                                                                                                                              |
-
+| 适配器类型            | 使用接口类型                                                   | 文生图 | 图生图 | 尺寸控制 | 说明                                                                                            |
+| :-------------------- | :------------------------------------------------------------- | :----: | :----: | :------: | :---------------------------------------------------------------------------------------------- |
+| `gemini`              | Gemini 原生 `generateContent`                                  |   ✅    |   ✅    |    ✅     | Gemini 原生图像生成接口。                                                                       |
+| `openai_chat`         | OpenAI 兼容 `chat/completions`                                 |   ✅    |   ✅    |    ❌     | 通用 Chat Completions 图像生成接口，可配置 `modalities`、提示词前缀和额外请求体。                |
+| `openai`              | OpenAI Images API `/v1/images/generations`、`/v1/images/edits` |   ✅    |   ✅    |    ✅     | DALL-E / GPT Image 系列；图生图仅 GPT Image 系列支持。                                          |
+| `volcengine_ark`      | 火山方舟 Images Generations `/api/v3/images/generations`       |   ✅    |   ✅    |    ✅     | Seedream 系列，支持单图和组图；参考图使用 `image` 字段。                                        |
+| `gitee_ai`            | Gitee AI `/v1/images/generations`、`/v1/images/edits`          |   ✅    |   ✅    |    ✅     | Gitee AI 通用图像接口                                                                           |
+| `jimeng2api`          | jimeng-api `/v1/images/generations`、`/v1/images/compositions` |   ✅    |   ✅    |    ✅     | 适用于 [iptag/jimeng-api](https://github.com/iptag/jimeng-api)。                                |
+| `grok`                | xAI Images API `/v1/images/generations`、`/v1/images/edits`    |   ✅    |   ✅    |    ✅     | Grok / xAI 图像生成接口。                                                                       |
+| `siliconflow_adapter` | SiliconFlow Images API `/v1/images/generations`                |   ✅    |   ✅    |    ✅     | 支持 Kolors、Qwen-Image、Qwen-Image-Edit、Z-Image；多参考图映射到 `image`、`image2`、`image3`。 |
+| `agnes_ai`            | Agnes AI Images API `/v1/images/generations`                   |   ✅    |   ✅    |    ✅     | 支持 `agnes-image-2.0-flash` 和 `agnes-image-2.1-flash`；参考图通过 `extra_body.image` 数组发送。 |
+| `custom_http`         | 用户自定义 HTTP JSON 接口                                      |   ✅    |   ✅    |    ✅     | 高级接口模板，详见 [自定义 HTTP 接口配置](docs/custom-http.md)。                                |
 
 ## 配置
 
@@ -72,6 +71,7 @@
 | 生图超时时间覆盖 | 单个供应商的超时时间；填 0 使用公共生图配置。                 |
 | 最大重试次数覆盖 | 单个供应商的重试次数；填 0 使用公共生图配置。                 |
 
+Agnes AI 额外提供“响应格式”下拉选项，默认 `base64`。文生图时会发送 `return_base64: true`，图生图时会发送 `extra_body.response_format: "b64_json"`；选择 `url` 时会发送 `extra_body.response_format: "url"` 并下载返回链接。图生图参考图通过 `extra_body.image` 数组发送。宽高比会映射为官方 `size` 字段，不会发送 `aspect_ratio` 字段。
 
 ### 生图配置
 
@@ -80,6 +80,7 @@
 | 生图模型             | 自动选择首个可用模型 | 当前使用的模型，可通过 `/生图模型` 更新。                                                       |
 | 生图超时时间         | 180 秒               | 请求超时时间。                                                                                  |
 | 最大重试次数         | 3                    | 生成失败后的最大重试次数。                                                                      |
+| 打印debug请求日志    | 关闭                 | 开启后以 debug 日志打印 JSON 请求/响应结构；长字符串、图片 Base64 和 data URL 会摘要，不包含 Authorization 请求头。 |
 | 最大并发生图请求数   | 3                    | 同时调用图像模型接口的请求数量上限；多图任务会在该限制内并发请求，完成一个后继续补发剩余请求。  |
 | 默认出图数量         | 1                    | 未在指令末尾或 LLM 工具中指定数量时，单个生图任务默认生成的图片数量。                           |
 | 单次最大出图数量     | 10                   | 单个生图任务最多生成的图片数量；用户请求超过该值时会自动截断。                                  |

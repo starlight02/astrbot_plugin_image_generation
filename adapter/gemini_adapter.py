@@ -111,6 +111,7 @@ class GeminiAdapter(BaseImageAdapter):
         masked_key = self._get_masked_api_key()
         prefix = self._get_log_prefix(task_id)
         logger.debug(f"{prefix} 请求 -> {safe_log_url(url)}, key={masked_key}")
+        self._log_debug_json("请求", payload, task_id)
 
         headers = {
             "Content-Type": "application/json",
@@ -131,11 +132,12 @@ class GeminiAdapter(BaseImageAdapter):
                 )
                 if response.status != 200:
                     error_text = await response.text()
+                    self._log_debug_json_text("响应", error_text, task_id)
                     logger.error(
                         f"{prefix} 错误 {response.status} (耗时: {duration:.2f}s): {safe_log_error_body(error_text)}"
                     )
                     return {"error": {"message": f"API 错误 ({response.status})"}}
-                return await response.json()
+                return await self._read_response_json(response, task_id)
         except Exception as e:
             duration = time.time() - start_time
             logger.error(f"{prefix} 请求异常 (耗时: {duration:.2f}s): {e}")

@@ -62,6 +62,7 @@ class Jimeng2APIAdapter(BaseImageAdapter):
                     payload["ratio"] = request.aspect_ratio
                 if request.resolution and request.resolution != UNSPECIFIED_OPTION:
                     payload["resolution"] = request.resolution.lower()
+                self._log_debug_json("请求", payload, request.task_id)
 
                 async with session.post(
                     url,
@@ -73,12 +74,13 @@ class Jimeng2APIAdapter(BaseImageAdapter):
                     duration = time.time() - start_time
                     if resp.status != 200:
                         error_text = await resp.text()
+                        self._log_debug_json_text("响应", error_text, request.task_id)
                         logger.error(
                             f"{prefix} Compositions 错误 ({resp.status}, 耗时: {duration:.2f}s): {safe_log_error_body(error_text)}"
                         )
                         return None, f"API 错误 ({resp.status})"
 
-                    data_json = await resp.json()
+                    data_json = await self._read_response_json(resp, request.task_id)
                     logger.debug(
                         f"{prefix} Compositions 响应: {safe_log_mapping(data_json)}"
                     )
@@ -98,6 +100,7 @@ class Jimeng2APIAdapter(BaseImageAdapter):
                     payload["ratio"] = request.aspect_ratio
                 if request.resolution and request.resolution != UNSPECIFIED_OPTION:
                     payload["resolution"] = request.resolution.lower()
+                self._log_debug_json("请求", payload, request.task_id)
 
                 async with session.post(
                     url,
@@ -109,12 +112,13 @@ class Jimeng2APIAdapter(BaseImageAdapter):
                     duration = time.time() - start_time
                     if resp.status != 200:
                         error_text = await resp.text()
+                        self._log_debug_json_text("响应", error_text, request.task_id)
                         logger.error(
                             f"{prefix} Generations 错误 ({resp.status}, 耗时: {duration:.2f}s): {safe_log_error_body(error_text)}"
                         )
                         return None, f"API 错误 ({resp.status})"
 
-                    data_json = await resp.json()
+                    data_json = await self._read_response_json(resp, request.task_id)
                     logger.debug(
                         f"{prefix} Generations 响应: {safe_log_mapping(data_json)}"
                     )

@@ -86,6 +86,7 @@ ADAPTER_EXTRA_DEFAULTS: dict[AdapterType, dict[str, Any]] = {
         "modalities": ["image", "text"],
     },
     AdapterType.OPENAI: {"model_family": "auto"},
+    AdapterType.AGNES_AI: {"response_format": "base64"},
 }
 LOG = log_prefix("Config")
 
@@ -114,6 +115,7 @@ class GenerationSettings:
     max_image_count: int = DEFAULT_MAX_GENERATION_IMAGE_COUNT
     max_images_per_message: int = DEFAULT_MAX_IMAGES_PER_MESSAGE
     max_concurrent_tasks: int = DEFAULT_MAX_CONCURRENT_TASKS
+    debug_request_logging: bool = False
     non_retryable_status_codes: list[int] = field(
         default_factory=lambda: list(DEFAULT_NON_RETRYABLE_STATUS_CODES)
     )
@@ -290,6 +292,11 @@ class ConfigManager:
                 "max_concurrent_tasks",
                 DEFAULT_MAX_CONCURRENT_TASKS,
                 min_value=1,
+            ),
+            debug_request_logging=self._get_bool(
+                cfg,
+                "debug_request_logging",
+                False,
             ),
             non_retryable_status_codes=self._parse_int_list(
                 cfg.get(
@@ -497,6 +504,9 @@ class ConfigManager:
                 "max_retry_attempts",
                 DEFAULT_MAX_RETRY_ATTEMPTS,
                 min_value=0,
+            ),
+            debug_request_logging=self._get_bool(
+                gen_cfg, "debug_request_logging", False
             ),
             non_retryable_status_codes=self._parse_int_list(
                 gen_cfg.get(
