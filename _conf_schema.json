@@ -1087,8 +1087,8 @@
         "default": 3
       },
       "debug_request_logging": {
-        "description": "打印debug请求日志",
-        "hint": "开启后 debug 打印 JSON 请求/响应结构，长字符串会摘要。",
+        "description": "打印 Debug 请求日志",
+        "hint": "在开启框架 Debug 日志的情况下，打印 JSON 请求/响应结构，长字符串会摘要。",
         "type": "bool",
         "default": false
       },

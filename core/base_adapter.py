@@ -145,7 +145,9 @@ class BaseImageAdapter(abc.ABC):
         digest = hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()[:12]
         if value.startswith("data:"):
             media_type = value.split(",", 1)[0]
-            return f"<data-url omitted: {media_type}, len={len(value)}, sha256={digest}>"
+            return (
+                f"<data-url omitted: {media_type}, len={len(value)}, sha256={digest}>"
+            )
         if BASE64_VALUE_RE.fullmatch(value):
             return f"<base64 omitted: len={len(value)}, sha256={digest}>"
 
